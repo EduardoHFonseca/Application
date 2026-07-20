@@ -31,8 +31,17 @@ O objetivo não é apenas automatizar cliques, mas garantir a qualidade das cand
   - Fazer o upload do PDF gerado.
   - Preencher os campos com as respostas geradas pela IA.
   - Concluir a candidatura ("Submit Application").
+  - **Notificação e Backup por E-mail (NOVO):** Logo após a submissão bem-sucedida, enviar uma notificação por e-mail para **fonseca.eduardo@terra.com.br** (via AgentMail) com o arquivo do currículo customizado anexado, acrescido do título da vaga e a lista exata de perguntas e respostas preenchidas no formulário.
 
-## 3. Próximos Passos para o Agente Codificador
-1. Analisar o repositório open-source selecionado.
-2. Identificar onde podemos injetar a chamada para a nossa IA (hooking) logo após a leitura do Job Description, mas antes do clique de "Submit".
-3. Desenvolver o script de IA (LLM/LangChain) que lerá a pasta `source/` e gerará o PDF dinâmico.
+---
+
+## 3. Integrações e Orquestração (OpenClaw)
+
+### 3.1 Loop de Mensagens do Telegram (Human-in-the-Loop)
+- Quando o Cérebro de IA deparar-se com uma pergunta para a qual não possui dados suficientes para responder de forma fidedigna, a execução entrará em estado de espera ativa (*pooling*).
+- Uma notificação contendo os detalhes da vaga e a pergunta será enviada via **Telegram Bot**.
+- **Nota de Credenciais:** Como o **OpenClaw** já possui a comunicação via Telegram plenamente configurada e ativa com o usuário, **o robô deve reutilizar essa credencial e canal de mensageria pré-existentes** no orquestrador para centralizar o fluxo de perguntas e respostas humanas.
+
+### 3.2 Notificações por E-mail (AgentMail)
+- A cada candidatura finalizada, o sistema dispara um e-mail utilizando o AgentMail direcionado a **fonseca.eduardo@terra.com.br** para consolidar as respostas enviadas e registrar uma cópia de backup do currículo gerado para controle pessoal.
+
