@@ -1,0 +1,23 @@
+# Ignore environment variables
+.env
+
+# Ignore LinkedIn bot configuration with credentials
+bot-core/config.yaml
+
+# Ignore generated custom PDFs and test outputs
+bot-core/custom_cv.pdf
+custom_cv.pdf
+test_custom_cv.pdf
+temp_test_attachment.pdf
+
+# Python cache and byte-compiled files
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# User outputs and logs
+*.csv
+logs/
+*.log
+bot-core/config.yaml
