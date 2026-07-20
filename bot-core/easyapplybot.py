@@ -14,7 +14,7 @@ import getpass
 from pathlib import Path
 
 import pandas as pd
-import pyautogui
+# import pyautogui
 import yaml
 from bs4 import BeautifulSoup
 from selenium import webdriver
@@ -109,7 +109,9 @@ class EasyApplyBot:
             raise FileNotFoundError("Chromium/Chrome not found in PATH.")
 
         self.options.binary_location = chrome_path
-        self.browser = webdriver.Chrome(service=ChromeService(chromedriver_path), options=self.options)
+        from webdriver_manager.core.os_manager import ChromeType
+        from webdriver_manager.chrome import ChromeDriverManager
+        self.browser = webdriver.Chrome(service=ChromeService(ChromeDriverManager(chrome_type=ChromeType.CHROMIUM).install()), options=self.options)
 
         self.wait = WebDriverWait(self.browser, 30)
         self.blacklist = blacklist
