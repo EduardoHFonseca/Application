@@ -2,8 +2,12 @@ import os
 import glob
 import json
 import logging
+import re
+import zipfile
+import xml.etree.ElementTree as ET
 import requests
 import pypdf
+import docx
 from typing import List, Dict, Tuple
 from fpdf import FPDF
 from dotenv import load_dotenv
@@ -47,27 +51,134 @@ class AIBrain:
         return response.json()["choices"][0]["message"]["content"].strip()
 
     @classmethod
+    def extract_file_text(cls, file_path: str) -> str:
+        """Extrai texto de forma extensível de arquivos PDF, DOCX e DOC."""
+        ext = os.path.splitext(file_path)[1].lower()
+        text = ""
+        
+        if ext == ".pdf":
+            try:
+                reader = pypdf.PdfReader(file_path)
+                for page in reader.pages:
+                    text += (page.extract_text() or "") + "\n"
+                return text.strip()
+            except Exception as e:
+                log.error(f"Erro ao ler PDF {file_path}: {e}")
+                
+        elif ext in [".docx", ".doc"]:
+            # Tenta via python-docx primeiro
+            try:
+                doc = docx.Document(file_path)
+                text = "\n".join([p.text for p in doc.paragraphs if p.text])
+                if text.strip():
+                    return text.strip()
+            except Exception:
+                pass
+                
+            # Tenta via zipfile (caso seja docx/openxml com extensão .doc)
+            if zipfile.is_zipfile(file_path):
+                try:
+                    with zipfile.ZipFile(file_path) as z:
+                        xml_content = z.read("word/document.xml")
+                        tree = ET.fromstring(xml_content)
+                        texts = [node.text for node in tree.iter() if node.text]
+                        text = " ".join(texts)
+                        if text.strip():
+                            return text.strip()
+                except Exception:
+                    pass
+                    
+            # Fallback para regex de texto limpo em arquivo de texto/XML
+            try:
+                with open(file_path, "rb") as f:
+                    content = f.read().decode("utf-8", errors="ignore")
+                    text = re.sub(r"<[^>]+>", " ", content)
+                    text = re.sub(r"\s+", " ", text).strip()
+                    return text
+            except Exception as e:
+                log.error(f"Erro no fallback de leitura do arquivo {file_path}: {e}")
+                
+        return text.strip()
+
+    @classmethod
     def get_base_cvs(cls) -> List[Dict[str, str]]:
         """
-        Lê todos os PDFs na pasta source/ e extrai seus conteúdos textuais.
+        Lê todos os PDFs e documentos Word na pasta source/ e extrai seus conteúdos textuais.
         """
         source_dir = "/home/efonseca/workspace/Application/source"
-        pdf_files = glob.glob(os.path.join(source_dir, "*.pdf"))
+        all_files = glob.glob(os.path.join(source_dir, "*"))
         cvs = []
-        for pdf_path in pdf_files:
-            try:
-                reader = pypdf.PdfReader(pdf_path)
-                text = ""
-                for page in reader.pages:
-                    text += page.extract_text() or ""
+        for file_path in all_files:
+            filename = os.path.basename(file_path)
+            if filename.startswith(".") or filename.endswith(".pptx") or filename.endswith(".gitkeep"):
+                continue
+            text = cls.extract_file_text(file_path)
+            if text:
                 cvs.append({
-                    "filename": os.path.basename(pdf_path),
-                    "path": pdf_path,
+                    "filename": filename,
+                    "path": file_path,
                     "content": text
                 })
-            except Exception as e:
-                log.error(f"Erro ao ler PDF {pdf_path}: {e}")
         return cvs
+
+    @classmethod
+    def generate_competencias_md(cls, output_path: str = "/home/efonseca/workspace/Application/Competencias.MD") -> str:
+        """
+        Sintetiza todos os documentos de currículos e cartas de source/ em uma matriz unificada Competencias.MD.
+        """
+        log.info("Iniciando geração da matriz unificada Competencias.MD...")
+        cvs = cls.get_base_cvs()
+        if not cvs:
+            raise FileNotFoundError("Nenhum documento encontrado na pasta source/")
+
+        cv_texts = "\n\n".join([f"=== ARQUIVO: {cv['filename']} ===\n{cv['content'][:3000]}" for cv in cvs])
+
+        system_prompt = (
+            "Você é um arquiteto de carreiras e especialista em sintetizar perfis de liderança de TI e Gestão de Produtos.\n"
+            "Sua tarefa é analisar todo o acervo de currículos e cartas de apresentação fornecidos e consolidar um único arquivo "
+            "estruturado em Markdown chamado 'Competencias.MD'.\n\n"
+            "ESTRUTURA OBRIGATÓRIA DO MARKDOWN:\n"
+            "# MATRIZ CONSOLIDADA DE COMPETÊNCIAS & EXPERIÊNCIAS\n\n"
+            "## 1. Perfil Profissional Executivo\n"
+            "(Resumo das principais áreas de atuação: Gerente de TI, Product Manager/Owner, Consultor de Tecnologia)\n\n"
+            "## 2. Matriz de Competências Técnicas & Metodológicas\n"
+            "(Lista estruturada por tópicos: Agilidade/Scrum/Kanban, Gestão de Produtos, Governança de TI, Cloud/Infraestrutura, Dados e Analytics, etc.)\n\n"
+            "## 3. Histórico de Carreiras & Conquistas Chave\n"
+            "(Síntese cronológica das principais realizações e cargos ocupados)\n\n"
+            "## 4. Formação Acadêmica, Idiomas & Certificações\n\n"
+            "## 5. Respostas de Praxe & Parâmetros Padrão\n"
+            "- Pretensão Salarial Inicial: R$ 60.000 / $ 10.000 USD\n"
+            "- Localização / Trabalho Remoto: São Paulo, Brasil (Disponível para modelo Remoto ou Híbrido)\n"
+            "- Autorização de Trabalho: Brasil / Aberto a processos com visto/sponsorship\n"
+        )
+
+        user_prompt = f"DOCUMENTOS DE ORIGEM:\n\n{cv_texts}"
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ]
+
+        try:
+            content = cls.call_llm(messages)
+            with open(output_path, "w", encoding="utf-8") as f:
+                f.write(content)
+            log.info(f"Arquivo Competencias.MD gerado com sucesso em: {output_path}")
+            return content
+        except Exception as e:
+            log.error(f"Erro ao gerar Competencias.MD via LLM: {e}")
+            fallback_content = "# MATRIZ CONSOLIDADA DE COMPETÊNCIAS\n\nEduardo M. Hermes da Fonseca\nProduct Owner / Product Manager / IT Manager"
+            with open(output_path, "w", encoding="utf-8") as f:
+                f.write(fallback_content)
+            return fallback_content
+
+    @classmethod
+    def get_competencias_context(cls) -> str:
+        md_path = "/home/efonseca/workspace/Application/Competencias.MD"
+        if not os.path.exists(md_path):
+            return cls.generate_competencias_md(md_path)
+        with open(md_path, "r", encoding="utf-8") as f:
+            return f.read()
 
     @classmethod
     def select_best_cv(cls, job_title: str, job_description: str) -> Dict[str, str]:
@@ -116,28 +227,29 @@ class AIBrain:
             return cvs[0]
 
     @classmethod
-    def customize_cv_text(cls, cv: Dict[str, str], job_title: str, job_description: str) -> Dict[str, str]:
+    def customize_cv_text(cls, competencias_text: str, job_title: str, job_description: str) -> Dict[str, str]:
         """
-        Usa o LLM para reescrever o resumo de qualificações e destacar as habilidades mais aderentes à vaga,
-        mantendo os dados cadastrais e o histórico profissional originais do candidato intactos.
+        Usa o LLM para sintetizar um currículo focado na vaga a partir da matriz de Competencias.MD.
         """
         system_prompt = (
             "Você é um especialista em escrita de currículos e ATS (Applicant Tracking Systems). "
-            "Sua tarefa é reescrever o Currículo fornecido para torná-lo extremamente personalizado para a vaga informada.\n"
+            "Sua tarefa é extrair e sintetizar informações da MATRIZ DE COMPETÊNCIAS do candidato para criar um currículo "
+            "extremamente personalizado para a vaga informada.\n"
             "Ajuste e customize prioritariamente a seção de RESUMO DE QUALIFICAÇÕES (SUMMARY) e HABILIDADES (SKILLS) para destacar "
-            "exatamente as competências que a vaga exige. "
-            "IMPORTANTE: Não invente experiências fictícias. Apenas enfatize e use as palavras-chave adequadas com base no currículo original do candidato.\n"
+            "as competências da vaga. "
+            "IMPORTANTE 1: Não invente experiências fictícias. Use a Matriz original.\n"
+            "IMPORTANTE 2: EVITE REPETIÇÕES EXAUSTIVAS. O modelo anterior cometeu o erro de repetir a mesma palavra-chave (como 'LGPD' ou 'IA') em quase todas as experiências. Seja elegante, consolide essas informações de forma orgânica e evite o 'keyword stuffing'. A redação deve soar humana e fluida.\n"
             "Retorne um JSON puro com as seguintes chaves:\n"
             "- 'title': Título profissional personalizado (ex: 'Senior Product Manager / Product Owner')\n"
-            "- 'summary': Resumo profissional totalmente personalizado e adaptado para a vaga\n"
-            "- 'highlighted_skills': Lista de habilidades mais relevantes para a vaga (ex: ['Agile', 'Scrum', 'Product Roadmap'])\n"
-            "- 'experience_highlights': Uma breve seção destacando como as experiências anteriores se encaixam nesta vaga específica\n"
-            "- 'full_original_experience': O histórico de experiências originais adaptado de forma limpa."
+            "- 'summary': Resumo profissional totalmente personalizado e adaptado para a vaga, sem repetições de jargões\n"
+            "- 'highlighted_skills': Lista de habilidades mais relevantes para a vaga\n"
+            "- 'experience_highlights': Breve seção destacando como as experiências se encaixam na vaga\n"
+            "- 'full_original_experience': O histórico cronológico formatado OBRIGATORIAMENTE COMO UMA ÚNICA STRING CONTÍNUA com quebras de linha (\\n). JAMAIS retorne listas de objetos JSON."
         )
         
         user_prompt = (
             f"VAGA:\nTítulo: {job_title}\nDescrição:\n{job_description}\n\n"
-            f"CURRÍCULO ORIGINAL:\n{cv['content']}"
+            f"MATRIZ DE COMPETÊNCIAS DO CANDIDATO:\n{competencias_text}"
         )
         
         messages = [
@@ -155,7 +267,7 @@ class AIBrain:
                 "summary": "Profissional experiente focado em resultados de negócios e tecnologia.",
                 "highlighted_skills": ["Gestão", "Liderança", "Agilidade"],
                 "experience_highlights": "Sólida experiência em cargos de gestão e liderança técnica.",
-                "full_original_experience": cv["content"]
+                "full_original_experience": competencias_text[:2000] # Fallback de segurança
             }
 
     @classmethod
@@ -163,6 +275,12 @@ class AIBrain:
         """
         Gera um PDF altamente polido e profissional com o CV customizado usando fpdf2.
         """
+        # Funcao auxiliar para sanitizar caracteres incompatíveis com a fonte padrão
+        def sanitize_text(text: str) -> str:
+            if not isinstance(text, str):
+                text = str(text)
+            return text.replace("–", "-").replace("—", "-").replace("“", '"').replace("”", '"').replace("’", "'").replace("‘", "'").replace("•", "-")
+
         class PDF(FPDF):
             def header(self):
                 # Cabeçalho elegante
@@ -183,19 +301,19 @@ class AIBrain:
         # Nome
         pdf.set_font("Helvetica", "B", 20)
         pdf.set_text_color(15, 33, 253)
-        pdf.cell(0, 10, "Eduardo M. Hermes da Fonseca", new_x="LMARGIN", new_y="NEXT", align="L")
+        pdf.cell(0, 10, sanitize_text("Eduardo M. Hermes da Fonseca"), new_x="LMARGIN", new_y="NEXT", align="L")
         
         # Informações de Contato
         pdf.set_font("Helvetica", "", 10)
         pdf.set_text_color(80)
-        pdf.cell(0, 5, "Casado - Brasileiro | (+5511) 992 954 344 | fonseca.eduardo@terra.com.br", new_x="LMARGIN", new_y="NEXT", align="L")
-        pdf.cell(0, 5, "LinkedIn: https://br.linkedin.com/in/eduardohermesdaf", new_x="LMARGIN", new_y="NEXT", align="L")
+        pdf.cell(0, 5, sanitize_text("Casado - Brasileiro | (+5511) 992 954 344 | fonseca.eduardo@terra.com.br"), new_x="LMARGIN", new_y="NEXT", align="L")
+        pdf.cell(0, 5, sanitize_text("LinkedIn: https://br.linkedin.com/in/eduardohermesdaf"), new_x="LMARGIN", new_y="NEXT", align="L")
         pdf.ln(5)
         
         # Título Profissional Customizado
         pdf.set_font("Helvetica", "B", 14)
         pdf.set_text_color(50)
-        pdf.cell(0, 8, data.get("title", "Product Specialist"), new_x="LMARGIN", new_y="NEXT", align="L")
+        pdf.cell(0, 8, sanitize_text(data.get("title", "Product Specialist")), new_x="LMARGIN", new_y="NEXT", align="L")
         pdf.ln(3)
         
         # Linha separadora
@@ -210,7 +328,7 @@ class AIBrain:
         pdf.ln(2)
         pdf.set_font("Helvetica", "", 10)
         pdf.set_text_color(50)
-        pdf.multi_cell(0, 5, data.get("summary", ""))
+        pdf.multi_cell(0, 5, sanitize_text(data.get("summary", "")))
         pdf.ln(5)
         
         # Seção: Habilidades em Destaque
@@ -221,7 +339,7 @@ class AIBrain:
         pdf.set_font("Helvetica", "", 10)
         pdf.set_text_color(50)
         skills_str = ", ".join(data.get("highlighted_skills", []))
-        pdf.multi_cell(0, 5, skills_str)
+        pdf.multi_cell(0, 5, sanitize_text(skills_str))
         pdf.ln(5)
         
         # Seção: Destaques de Experiência Adequada
@@ -232,7 +350,7 @@ class AIBrain:
             pdf.ln(2)
             pdf.set_font("Helvetica", "", 10)
             pdf.set_text_color(50)
-            pdf.multi_cell(0, 5, data.get("experience_highlights", ""))
+            pdf.multi_cell(0, 5, sanitize_text(data.get("experience_highlights", "")))
             pdf.ln(5)
             
         # Seção: Histórico Profissional
@@ -245,9 +363,37 @@ class AIBrain:
         
         # Multi_cell para todo o texto das experiências originais adaptadas de forma limpa
         original_exp = data.get("full_original_experience", "")
-        # Remove eventuais cabeçalhos duplicados do original para o PDF ficar limpo
-        lines = original_exp.split("\n")
-        cleaned_lines = [l for l in lines if "Eduardo M." not in l and "Terra" not in l and "992" not in l]
+        parsed_lines = []
+        
+        if isinstance(original_exp, list):
+            for item in original_exp:
+                if isinstance(item, dict):
+                    # O LLM enviou um JSON estruturado para cada experiência
+                    pos = item.get('position', item.get('title', item.get('role', '')))
+                    period = item.get('period', item.get('date', item.get('duration', '')))
+                    company = item.get('company', item.get('empresa', ''))
+                    
+                    header = str(pos)
+                    if company: header += f" - {company}"
+                    if period: header += f" | {period}"
+                    
+                    parsed_lines.append(header)
+                    
+                    resp = item.get('responsibilities', item.get('description', item.get('descricao', [])))
+                    if isinstance(resp, list):
+                        for r in resp:
+                            parsed_lines.append(f"• {r}")
+                    elif isinstance(resp, str):
+                        parsed_lines.append(resp)
+                        
+                    parsed_lines.append("") # Linha em branco para separar
+                else:
+                    parsed_lines.extend(str(item).split("\n"))
+            lines = parsed_lines
+        else:
+            lines = str(original_exp).split("\n")
+            
+        cleaned_lines = [sanitize_text(l) for l in lines if "Eduardo M." not in l and "Terra" not in l and "992" not in l]
         pdf.multi_cell(0, 5, "\n".join(cleaned_lines))
         
         # Salva o arquivo final
@@ -275,9 +421,16 @@ class AIBrain:
             "- Se você realmente NÃO conseguir deduzir a resposta a partir do currículo, retorne exatamente: 'UNANSWERED'."
         )
         
+        competencias_ctx = ""
+        try:
+            competencias_ctx = cls.get_competencias_context()
+        except Exception:
+            pass
+
         user_prompt = (
             f"VAGA:\nTítulo: {job_title}\n\n"
-            f"CURRÍCULO DO CANDIDATO:\n{cv_text}\n\n"
+            f"CURRÍCULO SELECIONADO:\n{cv_text}\n\n"
+            f"MATRIZ BASE DE COMPETÊNCIAS DO CANDIDATO:\n{competencias_ctx[:2000]}\n\n"
             f"PERGUNTA DA CANDIDATURA:\n{question}"
         )
         

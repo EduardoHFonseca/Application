@@ -93,3 +93,67 @@ class EmailService:
         except Exception as e:
             log.error(f"Erro ao enviar e-mail de notificação de candidatura: {e}")
             return None
+
+    def send_cv_generated_email(self, job_title: str, pdf_path: str):
+        """
+        Envia um e-mail com o CV anexo logo após sua geração, para revisão manual caso a automação falhe.
+        """
+        if not self.api_key:
+            log.warning("AGENTMAIL_API_KEY não configurada no .env. Não foi possível enviar o e-mail.")
+            return None
+
+        text_body = (
+            f"Olá,\n\n"
+            f"Um novo currículo customizado foi gerado com sucesso para a vaga: {job_title}\n\n"
+            f"O PDF do currículo está em anexo. Caso o robô não consiga completar a candidatura "
+            f"devido a bloqueios do LinkedIn, você pode utilizar este arquivo para se candidatar manualmente.\n"
+        )
+
+        html_body = (
+            f"<h3>Olá,</h3>"
+            f"<p>Um novo currículo customizado foi gerado com sucesso para a vaga: <b>{job_title}</b></p>"
+            f"<p>O PDF do currículo está em anexo. Caso o robô não consiga completar a candidatura "
+            f"devido a bloqueios do LinkedIn, você pode utilizar este arquivo para se candidatar manualmente.</p>"
+        )
+
+        attachments = []
+        if pdf_path and os.path.exists(pdf_path):
+            try:
+                with open(pdf_path, "rb") as f:
+                    file_data = f.read()
+                    base64_data = base64.b64encode(file_data).decode("utf-8")
+                
+                attachments.append({
+                    "filename": f"CV_{job_title.replace(' ', '_')[:30]}.pdf",
+                    "content_type": "application/pdf",
+                    "content": base64_data,
+                    "content_disposition": "attachment"
+                })
+            except Exception as e:
+                log.error(f"Erro ao codificar PDF: {e}")
+
+        recipient = "fonseca.eduardo@terra.com.br"
+        url = f"{self.base_url}/inboxes/{self.inbox_id}/messages/send"
+        
+        payload = {
+            "to": recipient,
+            "subject": f"[LinkedIn Easy Apply] CV Gerado (Revisão) - {job_title}",
+            "text": text_body,
+            "html": html_body,
+        }
+        if attachments:
+            payload["attachments"] = attachments
+
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json"
+        }
+
+        try:
+            r = requests.post(url, json=payload, headers=headers, timeout=30)
+            r.raise_for_status()
+            log.info(f"E-mail com CV recém-gerado enviado para {recipient}!")
+            return r.json()
+        except Exception as e:
+            log.error(f"Erro ao enviar e-mail do CV: {e}")
+            return None
