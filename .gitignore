@@ -25,3 +25,5 @@ state.json
 *.png
 *.html
 execution*.log
+*.db
+*.sqlite

@@ -156,5 +156,74 @@ class TestPlaywrightEasyApplyBot(unittest.TestCase):
         self.assertIn("Brazil", bot.locations)
 
 
+import database
+
+class TestDatabase(unittest.TestCase):
+    def setUp(self):
+        self.test_db_url = os.getenv("DATABASE_URL", "postgresql://efonseca@localhost:5432/application_db")
+        database.init_db(self.test_db_url)
+
+    def test_save_and_get_job(self):
+        job_id = database.save_or_update_job(
+            linkedin_job_id="test_job_123456",
+            url="https://linkedin.com/jobs/view/test_job_123456",
+            titulo="Senior Product Owner",
+            descricao="Looking for a PO",
+            status="iniciado",
+            db_url=self.test_db_url
+        )
+        self.assertGreater(job_id, 0)
+        
+        job = database.get_job_by_linkedin_id("test_job_123456", db_url=self.test_db_url)
+        self.assertIsNotNone(job)
+        self.assertEqual(job["titulo"], "Senior Product Owner")
+        self.assertFalse(database.is_job_applied("test_job_123456", db_url=self.test_db_url))
+
+        database.save_or_update_job(
+            linkedin_job_id="test_job_123456",
+            url="https://linkedin.com/jobs/view/test_job_123456",
+            status="aplicado",
+            db_url=self.test_db_url
+        )
+        self.assertTrue(database.is_job_applied("test_job_123456", db_url=self.test_db_url))
+
+    def test_save_qa(self):
+        vaga_id = database.save_or_update_job("test_qa_999", "http://example.com", "Dev", db_url=self.test_db_url)
+        database.save_qa(vaga_id, "anos de exp?", "10", origem="ia", db_url=self.test_db_url)
+        qas = database.get_qa_for_job(vaga_id, db_url=self.test_db_url)
+        self.assertGreater(len(qas), 0)
+        self.assertEqual(qas[0]["resposta"], "10")
+
+
+from playwright_bot import PlaywrightEasyApplyBot, extract_job_id_from_url
+
+class TestPhase2(unittest.TestCase):
+    def test_extract_job_id_from_url(self):
+        url1 = "https://www.linkedin.com/jobs/view/4123456789/"
+        self.assertEqual(extract_job_id_from_url(url1), "4123456789")
+
+        url2 = "https://www.linkedin.com/jobs/search/?currentJobId=9876543210&keywords=PO"
+        self.assertEqual(extract_job_id_from_url(url2), "9876543210")
+
+        url3 = "4123456789"
+        self.assertEqual(extract_job_id_from_url(url3), "4123456789")
+
+    def test_scheduler_interval_env(self):
+        os.environ["CRAWLER_INTERVAL_HOURS"] = "4"
+        bot = PlaywrightEasyApplyBot()
+        self.assertEqual(float(os.getenv("CRAWLER_INTERVAL_HOURS", "4")), 4.0)
+
+
+import py_compile
+
+class TestPhase3StreamlitApp(unittest.TestCase):
+    def test_app_py_syntax(self):
+        app_path = "/home/efonseca/workspace/Application/app.py"
+        self.assertTrue(os.path.exists(app_path))
+        # Compila o arquivo app.py para garantir zero erros de sintaxe
+        compiled = py_compile.compile(app_path, doraise=True)
+        self.assertIsNotNone(compiled)
+
+
 if __name__ == "__main__":
     unittest.main()

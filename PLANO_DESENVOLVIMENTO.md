@@ -69,7 +69,35 @@ Para permitir a orquestração robusta sob demanda pelo OpenClaw e a flexibilida
 
 ---
 
-## 3. Instruções de Execução em Servidor/VM Headless (SSH)
+## 3. Backlog de Expansão (Mapeado a partir de `Application Proj.pptx`)
+
+### [Fase 1] Persistência de Dados & Matriz de Competências
+- [x] **[F1.1] Camada de Banco de Dados (PostgreSQL):**
+  - Criada tabela `vagas` (id, linkedin_job_id, url, titulo, empresa, localizacao, descricao, status, pdf_custom_path, criado_em, atualizado_em) no banco local `application_db`.
+  - Criada tabela `perguntas_respostas` (id, vaga_id, pergunta, resposta, origem, respondido_em).
+  - Integrado ao `playwright_bot.py` com checagem de idempotência antes da aplicação.
+- [x] **[F1.2] Consolidador do Arquivo de Competências (`Competencias.MD`):**
+  - Implementado leitor unificado em `source/` suportando `.pdf`, `.doc` e `.docx`.
+  - Módulo LLM gera e atualiza automaticamente o arquivo `Competencias.MD` consolidando todo o histórico profissional.
+  - Refatorado `ai_brain.py` utilizando `Competencias.MD` como base primária.
+
+### [Fase 2] Candidatura Sob Demanda por URL & Scheduler de Automação
+- [x] **[F2.1] Submissão por URL Individual (Sob Demanda):**
+  - Implementado suporte CLI (`python playwright_bot.py --url <URL_DA_VAGA>`) com extrator automático de Job IDs para aplicação direta sob demanda.
+- [x] **[F2.2] Scheduler com Delay Inter-Execuções (4 Horas):**
+  - Implementado modo loop (`python playwright_bot.py --loop`) respeitando o intervalo configurado em `CRAWLER_INTERVAL_HOURS` (padrão 4 horas).
+
+### [Fase 3] Interface Web / Painel de Controle (Streamlit)
+- [x] **[F3.1] Dashboard Visual e Gestão de Parâmetros (`app.py`):**
+  - Implementado painel executivo em Streamlit com 4 abas completas:
+    - **Aba 1 - Histórico & Audit Trail:** Tabela de candidaturas conectada ao PostgreSQL, filtros por status, inspeção detalhada de formulários e download dos PDFs customizados gerados.
+    - **Aba 2 - Candidatura Sob Demanda:** Execução em tempo real de aplicação por URL de vaga do LinkedIn com streaming de logs em tela.
+    - **Aba 3 - Filtros & Configurações:** Edição visual do arquivo `.env` para posições, localizações, pretensão salarial e credenciais.
+    - **Aba 4 - Acervo & Matriz Competencias.MD:** Upload de novos currículos/cartas para `source/`, botão para re-sintetizar a matriz via LLM e visualizador em Markdown do `Competencias.MD`.
+
+---
+
+## 4. Instruções de Execução em Servidor/VM Headless (SSH)
 
 Para garantir 100% de estabilidade e imunidade contra erros gráficos (como `KeyError: 'DISPLAY'` ou `DevToolsActivePort`):
 1. **Playwright Standalone:** O robô utiliza o Playwright Python, que instala e gerencia o Chromium de forma hermética, independente e fora do ecossistema Snap ou drivers globais do sistema.
