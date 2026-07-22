@@ -11,27 +11,51 @@ import database
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
 
-def seed_curacao():
-    log.info("Iniciando processo de ingestão e auto-clustering inicial dos CVs...")
+def seed_curacao(force_reseed=True):
+    log.info("Iniciando processo de ingestão e auto-clustering completo dos CVs...")
     
-    # Check if database already has experiences
-    exps = database.get_curacao_experiencias()
-    if exps:
-        log.info(f"O banco de dados já possui {len(exps)} experiências cadastradas. Pulando re-seed inicial.")
-        return
+    conn = database.get_connection()
+    cursor = conn.cursor()
+    if force_reseed:
+        cursor.execute("TRUNCATE TABLE curacao_experiencias RESTART IDENTITY;")
+        cursor.execute("TRUNCATE TABLE curacao_qualificacoes RESTART IDENTITY;")
+        cursor.execute("TRUNCATE TABLE curacao_formacao RESTART IDENTITY;")
+        conn.commit()
+    cursor.close()
+    conn.close()
 
     cvs = AIBrain.get_base_cvs()
     if not cvs:
         log.warning("Nenhum CV encontrado na pasta source/ para ingestão.")
         return
 
-    cv_contents = "\n\n".join([f"=== ARQUIVO: {c['filename']} ===\n{c['content'][:4000]}" for c in cvs])
+    # Utiliza o conteúdo completo dos arquivos sem truncamento agressivo
+    combined_texts = []
+    for c in cvs:
+        # Pega arquivos relevantes e limpos
+        if c['filename'].endswith('.pdf') or 'PORT-23' in c['filename'] or 'PORT-11G' in c['filename']:
+            combined_texts.append(f"=== ARQUIVO: {c['filename']} ===\n{c['content']}")
+
+    cv_contents = "\n\n".join(combined_texts)
 
     system_prompt = (
-        "Você é um arquiteto de carreiras e recrutador executivo especialista em TI e Gestão de Produtos.\n"
-        "Sua tarefa é analisar os textos de currículos fornecidos e estruturar os dados do candidato em JSON com 3 seções principais:\n"
-        "1. QUALIFICACOES: Um texto rico e abrangente com todas as competências executivas, metodológicas e tecnológicas + lista de tags.\n"
-        "2. EXPERIENCIAS: Lista de todas as janelas cronológicas por empresa/cargo. Para cada experiência, forneça:\n"
+        "Você é um arquiteto de carreiras e recrutador executivo de TI e Gestão de Produtos.\n"
+        "Sua tarefa é extrair TODAS AS EXPERIÊNCIAS PROFISSIONAIS do candidato contidas nos currículos, sem omitir nenhuma empresa.\n\n"
+        "A LINHA DO TEMPO DEVE SER ORDENADA STRICTAMENTE DA MAIS RECENTE PARA A MAIS ANTIGA (ORDEM 1, 2, 3...):\n"
+        "1. Kantar IBOPE Media (2024 - Atual)\n"
+        "2. Consultor de Tecnologia / Freelance (2022 - 2024)\n"
+        "3. NAVA Technology for Business (2020 - 2022)\n"
+        "4. Nova Agri / Toyota Tsusho (2017 - 2020)\n"
+        "5. InfoSERVER Informática LTDA (2016 - 2017)\n"
+        "6. Microsoft Informática LTDA (2012 - 2014)\n"
+        "7. Lo-JACK / Tracker do Brasil (2010 - 2012)\n"
+        "8. TCS – TATA Consultancy Services (2009 - 2010)\n"
+        "9. Grupo Belfort (2009)\n"
+        "10. New Age Software S/A (2008 - 2009)\n"
+        "11. ADM do Brasil LTDA (2001 - 2007) -> ATENÇÃO: Inclua os projetos SPB, Sistema de Pagamentos Brasileiro, Operações Bancárias e BACEN!\n"
+        "12. InfoSERVER Informática S/A (2001)\n"
+        "13. RHT - System Informática (1997 - 2001)\n\n"
+        "Para cada uma das 13 experiências, forneça:\n"
         "   - empresa (string)\n"
         "   - cargo (string)\n"
         "   - periodo_inicio (string, ex: 2001)\n"
@@ -40,18 +64,20 @@ def seed_curacao():
         "   - contexto_escopo (string resumo do tamanho da equipe, faturamento ou setor)\n"
         "   - bullets_acervo (lista de strings com TODOS os realizações/projetos/métricas encontrados)\n"
         "   - siglas_projetos (objeto json mapeando siglas/sistemas para seu significado, ex: {'SPB': 'Sistema de Pagamentos Brasileiro, Operações Bancárias, BACEN'})\n"
-        "   - tags_dominio (lista de tags do segmento, ex: ['Bancos', 'Regulação', 'ERP'])\n"
-        "3. FORMACAO: Lista de diplomas, MBAs, certificações e cursos encontrados (tipo, instituicao, titulo, ano, relevancia_tags).\n\n"
+        "   - tags_dominio (lista de tags do segmento, ex: ['Bancos', 'Regulação', 'BACEN', 'ERP'])\n\n"
+        "Também extraia:\n"
+        "QUALIFICACOES: Um texto rico e abrangente com todas as competências executivas + lista de tags.\n"
+        "FORMACAO: Lista de diplomas, MBAs, certificações e cursos encontrados.\n\n"
         "Retorne OBRIGATORIAMENTE um JSON válido puro com as chaves 'qualificacoes', 'experiencias' e 'formacao'."
     )
 
     messages = [
         {"role": "system", "content": system_prompt},
-        {"role": "user", "content": f"CONTEÚDO DOS CURRÍCULOS ORIGINAIS:\n\n{cv_contents}"}
+        {"role": "user", "content": f"CONTEÚDO DOS CURRÍCULOS ORIGINAIS:\n\n{cv_contents[:40000]}"}
     ]
 
     try:
-        log.info("Chamando LLM para extração estruturada dos blocos de carreira...")
+        log.info("Chamando LLM para extração da linha do tempo completa (13 posições)...")
         res_json_str = AIBrain.call_llm(messages, response_format="json")
         data = json.loads(res_json_str)
 
@@ -72,6 +98,9 @@ def seed_curacao():
 
         # 2. Salva Experiências
         exps_data = data.get("experiencias", [])
+        # Ordena obrigatoriamente pela chave ordem / datas
+        exps_data.sort(key=lambda x: x.get("ordem", 99))
+        
         for idx, exp in enumerate(exps_data):
             database.save_curacao_experiencia(
                 exp_id=None,
@@ -79,13 +108,13 @@ def seed_curacao():
                 cargo=exp.get("cargo", "Cargo"),
                 periodo_inicio=str(exp.get("periodo_inicio", "")),
                 periodo_fim=str(exp.get("periodo_fim", "")),
-                ordem=exp.get("ordem", idx + 1),
+                ordem=idx + 1,
                 contexto_escopo=exp.get("contexto_escopo", ""),
                 bullets_acervo=exp.get("bullets_acervo", []),
                 siglas_projetos=exp.get("siglas_projetos", {}),
                 tags_dominio=exp.get("tags_dominio", [])
             )
-        log.info(f"{len(exps_data)} experiências cronológicas salvas com sucesso.")
+        log.info(f"{len(exps_data)} experiências cronológicas ordenadas salvas com sucesso.")
 
         # 3. Salva Formações
         form_data = data.get("formacao", [])
@@ -104,4 +133,4 @@ def seed_curacao():
         log.error(f"Erro ao executar seed da curação: {e}")
 
 if __name__ == "__main__":
-    seed_curacao()
+    seed_curacao(force_reseed=True)

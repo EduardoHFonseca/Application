@@ -247,7 +247,7 @@ with tab3:
                 subprocess.run(cmd, cwd=os.path.dirname(__file__))
                 st.rerun()
         else:
-            exp_options = {f"#{e['id']} - {e['empresa']} | {e['cargo']} ({e['periodo_inicio']} - {e['periodo_fim']})": e['id'] for e in exps_list}
+            exp_options = {f"[{idx+1}/{len(exps_list)}] {e['empresa']} | {e['cargo']} ({e['periodo_inicio']} - {e['periodo_fim']})": e['id'] for idx, e in enumerate(exps_list)}
             selected_exp_label = st.selectbox("Selecione a Janela de Experiência para Curação:", list(exp_options.keys()))
             selected_exp_id = exp_options[selected_exp_label]
             exp_curr = [e for e in exps_list if e['id'] == selected_exp_id][0]
