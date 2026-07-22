@@ -8,7 +8,7 @@ import xml.etree.ElementTree as ET
 import requests
 import pypdf
 import docx
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Any
 from fpdf import FPDF
 from dotenv import load_dotenv
 
@@ -227,29 +227,138 @@ class AIBrain:
             return cvs[0]
 
     @classmethod
-    def customize_cv_text(cls, competencias_text: str, job_title: str, job_description: str) -> Dict[str, str]:
+    @classmethod
+    def analyze_block_copilot(cls, exp_data: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Usa o LLM para sintetizar um currículo focado na vaga a partir da matriz de Competencias.MD.
+        Analisa um bloco de experiência profissional com o Copiloto IA para:
+        1. Mapear siglas e termos técnicos.
+        2. Gerar sugestões de palavras-chave/conceitos de domínio (ex: SPB -> Operações Bancárias).
+        3. Gerar 1 a 2 perguntas provocativas para resgatar memórias de conquistas e números reais.
         """
         system_prompt = (
-            "Você é um especialista em escrita de currículos e ATS (Applicant Tracking Systems). "
-            "Sua tarefa é extrair e sintetizar informações da MATRIZ DE COMPETÊNCIAS do candidato para criar um currículo "
-            "extremamente personalizado para a vaga informada.\n"
-            "Ajuste e customize prioritariamente a seção de RESUMO DE QUALIFICAÇÕES (SUMMARY) e HABILIDADES (SKILLS) para destacar "
-            "as competências da vaga. "
-            "IMPORTANTE 1: Não invente experiências fictícias. Use a Matriz original.\n"
-            "IMPORTANTE 2: EVITE REPETIÇÕES EXAUSTIVAS. O modelo anterior cometeu o erro de repetir a mesma palavra-chave (como 'LGPD' ou 'IA') em quase todas as experiências. Seja elegante, consolide essas informações de forma orgânica e evite o 'keyword stuffing'. A redação deve soar humana e fluida.\n"
+            "Você é um consultor especialista em carreira executiva e auditoria de currículos para robôs ATS.\n"
+            "Sua função é analisar os detalhes de uma experiência profissional específica do candidato e gerar insights e expansões de termos.\n\n"
+            "Retorne a resposta OBRIGATORIAMENTE em formato JSON com as chaves:\n"
+            "- 'siglas_detectadas': lista de objetos [{'sigla': 'SPB', 'significado': 'Sistema de Pagamentos Brasileiro', 'conceitos': ['Operações Bancárias', 'Regulação BACEN', 'Liquidação Financeira']}]\n"
+            "- 'tags_sugeridas': lista de strings de palavras-chave/conceitos de indústria que esse bloco abrange (ex: ['Ambiente Regulado', 'Compliance', 'STR/CIP'])\n"
+            "- 'perguntas_provocativas': lista de 2 perguntas curtas e diretas para o candidato resgatar métricas ou regras específicas de negócio."
+        )
+
+        user_prompt = (
+            f"EMPRESA: {exp_data.get('empresa')}\n"
+            f"CARGO: {exp_data.get('cargo')}\n"
+            f"PERÍODO: {exp_data.get('periodo_inicio')} - {exp_data.get('periodo_fim')}\n"
+            f"CONTEXTO: {exp_data.get('contexto_escopo', '')}\n"
+            f"BULLETS / REALIZAÇÕES:\n" + "\n".join([f"- {b}" for b in exp_data.get('bullets_acervo', [])]) + "\n"
+            f"TAGS ATUAIS: {', '.join(exp_data.get('tags_dominio', []))}\n"
+        )
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ]
+
+        try:
+            res_str = cls.call_llm(messages, response_format="json")
+            return json.loads(res_str)
+        except Exception as e:
+            log.error(f"Erro no Copiloto de Análise de Bloco: {e}")
+            return {
+                "siglas_detectadas": [],
+                "tags_sugeridas": ["TI Executiva", "Gestão de Projetos"],
+                "perguntas_provocativas": ["Qual foi o principal resultado quantitativo ou orçamento gerido nesta posição?"]
+            }
+
+    @classmethod
+    def get_curacao_cv_context(cls) -> str:
+        """
+        Formata o acervo mestre de curação (Qualificações, Experiências e Formação)
+        gravados no PostgreSQL para alimentar o gerador de CV.
+        """
+        try:
+            import database
+            
+            # Qualificações
+            q_data = database.get_curacao_qualificacoes()
+            q_texto = q_data.get("texto_acervo", "")
+            q_tags = ", ".join(q_data.get("tags", []) or [])
+            
+            # Experiências
+            exps = database.get_curacao_experiencias()
+            exp_blocks = []
+            for e in exps:
+                bullets = e.get("bullets_acervo", []) or []
+                if isinstance(bullets, str):
+                    try: bullets = json.loads(bullets)
+                    except: bullets = [bullets]
+                b_list = "\n".join([f"  * {b}" for b in bullets])
+                
+                siglas_map = e.get("siglas_projetos", {}) or {}
+                if isinstance(siglas_map, str):
+                    try: siglas_map = json.loads(siglas_map)
+                    except: siglas_map = {}
+                siglas_str = ", ".join([f"{k}: {v}" for k, v in siglas_map.items()]) if isinstance(siglas_map, dict) else ""
+                
+                tags_arr = e.get("tags_dominio", []) or []
+                tags_str = ", ".join(tags_arr)
+                
+                block = (
+                    f"### JANELA CRONOLÓGICA FIXA: {e.get('empresa')} | {e.get('cargo')} ({e.get('periodo_inicio')} - {e.get('periodo_fim')})\n"
+                    f"- Contexto/Escopo: {e.get('contexto_escopo', 'N/A')}\n"
+                    f"- Conceitos & Tags de Domínio: {tags_str}\n"
+                    f"- Dicionário de Siglas & Projetos: {siglas_str}\n"
+                    f"- ACERVO COMPLETO DE REALIZAÇÕES (ICEBERG DE BULLETS):\n{b_list}\n"
+                )
+                exp_blocks.append(block)
+                
+            # Formação
+            forms = database.get_curacao_formacao()
+            form_lines = [f"- [{f.get('tipo', '').upper()}] {f.get('titulo')} - {f.get('instituicao')} ({f.get('ano')})" for f in forms]
+            
+            return (
+                "=================== BASE MESTRA FACT-BASED (FONTE ÚNICA DA VERDADE) ===================\n\n"
+                "## 1. ACERVO MESTRE DE QUALIFICAÇÕES:\n"
+                f"{q_texto}\n"
+                f"Tags Mestre: {q_tags}\n\n"
+                "## 2. JANELAS DE EXPERIÊNCIA CRONOLÓGICA (FIXAS E IMUTÁVEIS):\n"
+                + "\n\n".join(exp_blocks) + "\n\n"
+                "## 3. ACERVO DE FORMAÇÃO, CERTIFICAÇÕES & CURSOS:\n"
+                + "\n".join(form_lines) + "\n\n"
+                "========================================================================================="
+            )
+        except Exception as e:
+            log.error(f"Erro ao obter contexto de curação: {e}")
+            return cls.get_competencias_context()
+
+    @classmethod
+    def customize_cv_text(cls, competencias_text: str, job_title: str, job_description: str) -> Dict[str, str]:
+        """
+        Usa o LLM para sintetizar um currículo focado na vaga a partir da Base Mestra Fact-Based.
+        """
+        # Tenta obter a Base Mestra Fact-Based do banco de dados
+        fact_context = cls.get_curacao_cv_context()
+
+        system_prompt = (
+            "Você é um especialista em escrita de currículos executivos e otimização para robôs ATS (Applicant Tracking Systems).\n"
+            "Sua tarefa é extrair e sintetizar informações da BASE MESTRA FACT-BASED do candidato para criar um currículo "
+            "extremamente personalizado e de alto impacto para a vaga informada.\n\n"
+            "DIRETRIZES DE REDAÇÃO EXECUÇÕES E REGRAS INVIOLÁVEIS:\n"
+            "1. JANELAS CRONOLÓGICAS FIXAS: Mantenha rigorosamente as datas e empresas originais da linha do tempo. Jamais altere nomes de empresas ou períodos.\n"
+            "2. SELEÇÃO CIRÚRGICA DE BULLETS (1 a 3 por empresa): Para cada empresa na linha do tempo, selecione no máximo 2 a 3 conquistas do acervo que sejam mais relevantes e aderentes aos requisitos da vaga.\n"
+            "3. EXPANSÃO DE CONCEITOS E SIGLAS: Se a vaga pedir competências técnicas ou de regulação (ex: 'Operações Bancárias', 'Ambiente Regulado', 'Agilidade', 'Cloud'), consulte o acervo de siglas/tags (ex: SPB = Operações Bancárias BACEN) e inclua os conceitos correspondentes de forma orgânica nos bullets.\n"
+            "4. RESUMO DE QUALIFICAÇÕES (SUMMARY): Elabore um parágrafo executivo denso de 3 a 5 linhas alinhando a bagagem do candidato exatamente com a senioridade e os desafios da vaga.\n"
+            "5. NENHUMA ALUCINAÇÃO: Utilize apenas os fatos, métricas e projetos presentes na Base Mestra. Nunca invente dados.\n\n"
             "Retorne um JSON puro com as seguintes chaves:\n"
-            "- 'title': Título profissional personalizado (ex: 'Senior Product Manager / Product Owner')\n"
-            "- 'summary': Resumo profissional totalmente personalizado e adaptado para a vaga, sem repetições de jargões\n"
-            "- 'highlighted_skills': Lista de habilidades mais relevantes para a vaga\n"
-            "- 'experience_highlights': Breve seção destacando como as experiências se encaixam na vaga\n"
-            "- 'full_original_experience': O histórico cronológico formatado OBRIGATORIAMENTE COMO UMA ÚNICA STRING CONTÍNUA com quebras de linha (\\n). JAMAIS retorne listas de objetos JSON."
+            "- 'title': Título profissional personalizado para a vaga\n"
+            "- 'summary': Resumo profissional executivo adaptado para a vaga\n"
+            "- 'highlighted_skills': Lista de 6 a 10 habilidades/palavras-chave essenciais para passar nos filtros ATS da vaga\n"
+            "- 'experience_highlights': Destaques de experiência alinhados aos requisitos principais\n"
+            "- 'full_original_experience': O histórico cronológico formatado OBRIGATORIAMENTE COMO UMA ÚNICA STRING CONTÍNUA com quebras de linha (\\n), estruturado em 'EMPRESA | CARGO (DATA)', seguido dos 2 a 3 bullets selecionados e ao final a seção de Formação & Certificações selecionadas."
         )
         
         user_prompt = (
-            f"VAGA:\nTítulo: {job_title}\nDescrição:\n{job_description}\n\n"
-            f"MATRIZ DE COMPETÊNCIAS DO CANDIDATO:\n{competencias_text}"
+            f"VAGA ALVO:\nTítulo: {job_title}\nDescrição:\n{job_description}\n\n"
+            f"BASE MESTRA FACT-BASED DO CANDIDATO:\n{fact_context}"
         )
         
         messages = [
@@ -264,10 +373,10 @@ class AIBrain:
             log.error(f"Erro ao customizar CV: {e}")
             return {
                 "title": job_title,
-                "summary": "Profissional experiente focado em resultados de negócios e tecnologia.",
-                "highlighted_skills": ["Gestão", "Liderança", "Agilidade"],
-                "experience_highlights": "Sólida experiência em cargos de gestão e liderança técnica.",
-                "full_original_experience": competencias_text[:2000] # Fallback de segurança
+                "summary": "Profissional executivo focado em tecnologia e resultados de negócios.",
+                "highlighted_skills": ["Gestão Executiva", "Liderança de TI", "Agilidade"],
+                "experience_highlights": "Sólida experiência em gestão e governança de tecnologia.",
+                "full_original_experience": fact_context[:2000]
             }
 
     @classmethod

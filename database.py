@@ -1,4 +1,5 @@
 import os
+import json
 import logging
 from typing import Optional, Dict, Any, List
 import psycopg2
@@ -42,6 +43,43 @@ def init_db(db_url: str = None):
             resposta TEXT NOT NULL,
             origem VARCHAR(50) NOT NULL DEFAULT 'ia',
             respondido_em TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        );
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS curacao_qualificacoes (
+            id SERIAL PRIMARY KEY,
+            texto_acervo TEXT NOT NULL,
+            tags TEXT[] DEFAULT '{}',
+            atualizado_em TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        );
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS curacao_experiencias (
+            id SERIAL PRIMARY KEY,
+            empresa VARCHAR(255) NOT NULL,
+            cargo VARCHAR(255) NOT NULL,
+            periodo_inicio VARCHAR(50) NOT NULL,
+            periodo_fim VARCHAR(50) NOT NULL,
+            ordem INTEGER DEFAULT 0,
+            contexto_escopo TEXT,
+            bullets_acervo JSONB DEFAULT '[]'::jsonb,
+            siglas_projetos JSONB DEFAULT '{}'::jsonb,
+            tags_dominio TEXT[] DEFAULT '{}',
+            atualizado_em TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        );
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS curacao_formacao (
+            id SERIAL PRIMARY KEY,
+            tipo VARCHAR(50) NOT NULL,
+            instituicao VARCHAR(255) NOT NULL,
+            titulo VARCHAR(255) NOT NULL,
+            ano VARCHAR(50),
+            relevancia_tags TEXT[] DEFAULT '{}',
+            atualizado_em TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
         );
     """)
     
@@ -135,6 +173,150 @@ def get_qa_for_job(vaga_id: int, db_url: str = None) -> List[Dict[str, Any]]:
     cursor.close()
     conn.close()
     return [dict(r) for r in rows]
+
+# --- CURACAO DATABASE HELPERS ---
+
+def get_curacao_qualificacoes(db_url: str = None) -> Dict[str, Any]:
+    conn = get_connection(db_url)
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
+    cursor.execute("SELECT * FROM curacao_qualificacoes ORDER BY id DESC LIMIT 1")
+    row = cursor.fetchone()
+    cursor.close()
+    conn.close()
+    return dict(row) if row else {"id": None, "texto_acervo": "", "tags": []}
+
+def save_curacao_qualificacoes(texto: str, tags: List[str] = None, db_url: str = None) -> int:
+    conn = get_connection(db_url)
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
+    tags_val = tags or []
+    cursor.execute("SELECT id FROM curacao_qualificacoes ORDER BY id DESC LIMIT 1")
+    row = cursor.fetchone()
+    if row:
+        qid = row["id"]
+        cursor.execute("""
+            UPDATE curacao_qualificacoes
+            SET texto_acervo = %s, tags = %s, atualizado_em = CURRENT_TIMESTAMP
+            WHERE id = %s
+        """, (texto, tags_val, qid))
+    else:
+        cursor.execute("""
+            INSERT INTO curacao_qualificacoes (texto_acervo, tags)
+            VALUES (%s, %s) RETURNING id
+        """, (texto, tags_val))
+        qid = cursor.fetchone()["id"]
+    conn.commit()
+    cursor.close()
+    conn.close()
+    return qid
+
+def get_curacao_experiencias(db_url: str = None) -> List[Dict[str, Any]]:
+    conn = get_connection(db_url)
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
+    cursor.execute("SELECT * FROM curacao_experiencias ORDER BY ordem ASC, id ASC")
+    rows = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    return [dict(r) for r in rows]
+
+def save_curacao_experiencia(
+    exp_id: Optional[int],
+    empresa: str,
+    cargo: str,
+    periodo_inicio: str,
+    periodo_fim: str,
+    ordem: int = 0,
+    contexto_escopo: str = "",
+    bullets_acervo: List[str] = None,
+    siglas_projetos: Dict[str, str] = None,
+    tags_dominio: List[str] = None,
+    db_url: str = None
+) -> int:
+    conn = get_connection(db_url)
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
+    bullets_json = json.dumps(bullets_acervo or [])
+    siglas_json = json.dumps(siglas_projetos or {})
+    tags_arr = tags_dominio or []
+    
+    if exp_id:
+        cursor.execute("""
+            UPDATE curacao_experiencias
+            SET empresa = %s, cargo = %s, periodo_inicio = %s, periodo_fim = %s,
+                ordem = %s, contexto_escopo = %s, bullets_acervo = %s,
+                siglas_projetos = %s, tags_dominio = %s, atualizado_em = CURRENT_TIMESTAMP
+            WHERE id = %s
+        """, (empresa, cargo, periodo_inicio, periodo_fim, ordem, contexto_escopo, bullets_json, siglas_json, tags_arr, exp_id))
+        res_id = exp_id
+    else:
+        cursor.execute("""
+            INSERT INTO curacao_experiencias (empresa, cargo, periodo_inicio, periodo_fim, ordem, contexto_escopo, bullets_acervo, siglas_projetos, tags_dominio)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id
+        """, (empresa, cargo, periodo_inicio, periodo_fim, ordem, contexto_escopo, bullets_json, siglas_json, tags_arr))
+        res_id = cursor.fetchone()["id"]
+        
+    conn.commit()
+    cursor.close()
+    conn.close()
+    return res_id
+
+def delete_curacao_experiencia(exp_id: int, db_url: str = None):
+    conn = get_connection(db_url)
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM curacao_experiencias WHERE id = %s", (exp_id,))
+    conn.commit()
+    cursor.close()
+    conn.close()
+
+def get_curacao_formacao(db_url: str = None) -> List[Dict[str, Any]]:
+    conn = get_connection(db_url)
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
+    cursor.execute("SELECT * FROM curacao_formacao ORDER BY id ASC")
+    rows = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    return [dict(r) for r in rows]
+
+def save_curacao_formacao(
+    form_id: Optional[int],
+    tipo: str,
+    instituicao: str,
+    titulo: str,
+    ano: str,
+    relevancia_tags: List[str] = None,
+    db_url: str = None
+) -> int:
+    conn = get_connection(db_url)
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
+    tags_arr = relevancia_tags or []
+    
+    if form_id:
+        cursor.execute("""
+            UPDATE curacao_formacao
+            SET tipo = %s, instituicao = %s, titulo = %s, ano = %s,
+                relevancia_tags = %s, atualizado_em = CURRENT_TIMESTAMP
+            WHERE id = %s
+        """, (tipo, instituicao, titulo, ano, tags_arr, form_id))
+        res_id = form_id
+    else:
+        cursor.execute("""
+            INSERT INTO curacao_formacao (tipo, instituicao, titulo, ano, relevancia_tags)
+            VALUES (%s, %s, %s, %s, %s)
+            RETURNING id
+        """, (tipo, instituicao, titulo, ano, tags_arr))
+        res_id = cursor.fetchone()["id"]
+        
+    conn.commit()
+    cursor.close()
+    conn.close()
+    return res_id
+
+def delete_curacao_formacao(form_id: int, db_url: str = None):
+    conn = get_connection(db_url)
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM curacao_formacao WHERE id = %s", (form_id,))
+    conn.commit()
+    cursor.close()
+    conn.close()
 
 # Inicializa o banco de dados PostgreSQL ao importar
 try:

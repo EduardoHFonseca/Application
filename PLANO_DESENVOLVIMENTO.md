@@ -95,6 +95,15 @@ Para permitir a orquestração robusta sob demanda pelo OpenClaw e a flexibilida
     - **Aba 3 - Filtros & Configurações:** Edição visual do arquivo `.env` para posições, localizações, pretensão salarial e credenciais.
     - **Aba 4 - Acervo & Matriz Competencias.MD:** Upload de novos currículos/cartas para `source/`, botão para re-sintetizar a matriz via LLM e visualizador em Markdown do `Competencias.MD`.
 
+### [Fase 4] Reformulação do Gerador de CVs (Arquitetura Fact-Based)
+- [ ] **[F4.1] Camada 1 - Base Mestra de Carreira Granular (`master_career_base.json`):**
+  - Estruturação do histórico completo por Empresa, Cargo, Período, Escopo/Equipe/Budget, Conquistas Quantificadas (Métricas STAR), Case Studies de Projetos e Tags de Perfil (`CTO`, `PRODUCT_HEAD`, `IT_MANAGER`, `CONSULTING`).
+- [ ] **[F4.2] Camada 2 - Motor de Redação Executiva (STAR Tailored Engine):**
+  - Job Profiler (Aderência de perfil, ATS Keywords, Idioma).
+  - Resgate inteligente de fatos e conquistas relevantes sem alucinações.
+- [ ] **[F4.3] Camada 3 - Template PDF Padrão Harvard/Corporate:**
+  - Layout denso e otimizado para robôs de recrutamento (ATS).
+
 ---
 
 ## 4. Instruções de Execução em Servidor/VM Headless (SSH)

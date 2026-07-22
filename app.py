@@ -2,6 +2,7 @@ import os
 import sys
 import time
 import glob
+import json
 import subprocess
 import pandas as pd
 import streamlit as st
@@ -99,11 +100,12 @@ st.divider()
 # ---------------------------------------------------------
 # NAVEGAÇÃO POR ABAS
 # ---------------------------------------------------------
-tab1, tab2, tab3, tab4 = st.tabs([
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "📊 Histórico & Audit Trail",
     "🎯 Candidatura Sob Demanda",
+    "🧩 Curação da Base Mestra",
     "⚙️ Filtros & Configurações",
-    "📄 Acervo & Matriz Competencias.MD"
+    "📄 Acervo Original & Fontes"
 ])
 
 # ---------------------------------------------------------
@@ -201,9 +203,226 @@ with tab2:
                 st.error("Ocorreu uma falha durante o processamento da candidatura. Verifique os logs acima.")
 
 # ---------------------------------------------------------
-# ABA 3: FILTROS & CONFIGURAÇÕES (.ENV)
+# ABA 3: CURAÇÃO DA BASE MESTRA (FACT-BASED & COPILOTO IA)
 # ---------------------------------------------------------
 with tab3:
+    st.subheader("🧩 Curação da Base Mestra & Copiloto de Enriquecimento IA")
+    st.caption("Ajuste e enriqueça a 'Fonte Única da Verdade' do seu histórico profissional no PostgreSQL com o suporte da IA.")
+
+    cur_sub1, cur_sub2, cur_sub3 = st.tabs([
+        "👤 1. Acervo de Qualificações Mestre",
+        "💼 2. Janelas de Experiência Cronológica",
+        "🎓 3. Acervo de Formação & Certificações"
+    ])
+
+    # --- SUB-ABA 1: QUALIFICAÇÕES MESTRE ---
+    with cur_sub1:
+        st.write("### 👤 Acervo de Qualificações e Competências Executivas")
+        st.info("Este texto é o repositório amplo onde o motor consulta suas competências de liderança, táticas e metodológicas para montar o Resumo Profissional da vaga.")
+        
+        q_data = database.get_curacao_qualificacoes()
+        
+        with st.form("form_qualificacoes"):
+            q_texto_input = st.text_area("Acervo de Qualificações (Texto Amplo):", value=q_data.get("texto_acervo", ""), height=250)
+            q_tags_input = st.text_input("Tags / Marcadores (separados por vírgula):", value=", ".join(q_data.get("tags", []) or []))
+            
+            btn_save_q = st.form_submit_button("💾 Salvar Qualificações no Banco", type="primary")
+            if btn_save_q:
+                tags_list = [t.strip() for t in q_tags_input.split(",") if t.strip()]
+                database.save_curacao_qualificacoes(q_texto_input, tags_list)
+                st.success("Qualificações salvas com sucesso no PostgreSQL!")
+                st.rerun()
+
+    # --- SUB-ABA 2: JANELAS DE EXPERIÊNCIA CRONOLÓGICA (COPILOTO IA) ---
+    with cur_sub2:
+        st.write("### 💼 Janelas de Experiência Cronológica (Iceberg de Realizações)")
+        st.caption("Janelas e cargos são imutáveis na linha do tempo. Adicione todos os detalhes e use o Copiloto IA para expandir siglas (ex: SPB -> Operações Bancárias BACEN).")
+
+        exps_list = database.get_curacao_experiencias()
+        
+        if not exps_list:
+            st.warning("Nenhuma experiência cadastrada no banco. Clique no botão abaixo para rodar o seed inicial do acervo.")
+            if st.button("🚀 Iniciar Ingestão / Seed de Experiências"):
+                cmd = [sys.executable, "seed_curacao.py"]
+                subprocess.run(cmd, cwd=os.path.dirname(__file__))
+                st.rerun()
+        else:
+            exp_options = {f"#{e['id']} - {e['empresa']} | {e['cargo']} ({e['periodo_inicio']} - {e['periodo_fim']})": e['id'] for e in exps_list}
+            selected_exp_label = st.selectbox("Selecione a Janela de Experiência para Curação:", list(exp_options.keys()))
+            selected_exp_id = exp_options[selected_exp_label]
+            exp_curr = [e for e in exps_list if e['id'] == selected_exp_id][0]
+
+            # Layout 2 Colunas Lado a Lado (60% / 40%)
+            col_form, col_copilot = st.columns([3, 2])
+
+            with col_form:
+                st.markdown(f"#### 🏢 Editando: **{exp_curr['empresa']}**")
+                
+                with st.form(f"form_exp_{exp_curr['id']}"):
+                    f_empresa = st.text_input("Empresa:", value=exp_curr['empresa'])
+                    f_cargo = st.text_input("Cargo:", value=exp_curr['cargo'])
+                    
+                    c_p1, c_p2 = st.columns(2)
+                    with c_p1:
+                        f_inicio = st.text_input("Ano / Período Início:", value=str(exp_curr['periodo_inicio']))
+                    with c_p2:
+                        f_fim = st.text_input("Ano / Período Fim:", value=str(exp_curr['periodo_fim']))
+                        
+                    f_contexto = st.text_area("Contexto & Escopo (Time, Budget, Faturamento):", value=exp_curr.get('contexto_escopo', ''), height=80)
+                    
+                    # Bullets
+                    bullets_raw = exp_curr.get('bullets_acervo', []) or []
+                    if isinstance(bullets_raw, str):
+                        try: bullets_raw = json.loads(bullets_raw)
+                        except: bullets_raw = [bullets_raw]
+                    
+                    bullets_text = st.text_area("Bullets / Realizações / Métricas (um por linha):", value="\n".join(bullets_raw), height=200)
+                    
+                    # Siglas & Projetos (JSON string)
+                    siglas_map = exp_curr.get('siglas_projetos', {}) or {}
+                    if isinstance(siglas_map, str):
+                        try: siglas_map = json.loads(siglas_map)
+                        except: siglas_map = {}
+                    siglas_text = st.text_area("Dicionário de Siglas & Projetos (Formato CHAVE = VALOR, um por linha, ex: SPB = Sistema de Pagamentos Brasileiro, Operações Bancárias):", value="\n".join([f"{k} = {v}" for k, v in siglas_map.items()]), height=100)
+                    
+                    # Tags de Domínio
+                    tags_arr = exp_curr.get('tags_dominio', []) or []
+                    f_tags = st.text_input("Tags de Domínio & Área de Atuação (separadas por vírgula):", value=", ".join(tags_arr))
+
+                    btn_save_exp = st.form_submit_button("💾 Salvar Alterações na Janela", type="primary", use_container_width=True)
+                    
+                    if btn_save_exp:
+                        # Parse Bullets
+                        b_list = [b.strip() for b in bullets_text.split("\n") if b.strip()]
+                        
+                        # Parse Siglas
+                        s_dict = {}
+                        for line in siglas_text.split("\n"):
+                            if "=" in line:
+                                k, v = line.split("=", 1)
+                                s_dict[k.strip()] = v.strip()
+                        
+                        # Parse Tags
+                        t_list = [t.strip() for t in f_tags.split(",") if t.strip()]
+                        
+                        database.save_curacao_experiencia(
+                            exp_id=exp_curr['id'],
+                            empresa=f_empresa.strip(),
+                            cargo=f_cargo.strip(),
+                            periodo_inicio=f_inicio.strip(),
+                            periodo_fim=f_fim.strip(),
+                            ordem=exp_curr.get('ordem', 0),
+                            contexto_escopo=f_contexto.strip(),
+                            bullets_acervo=b_list,
+                            siglas_projetos=s_dict,
+                            tags_dominio=t_list
+                        )
+                        st.success(f"Janela de **{f_empresa}** atualizada com sucesso no PostgreSQL!")
+                        st.rerun()
+
+            # --- COLUNA DO COPILOTO IA ---
+            with col_copilot:
+                st.markdown("#### 🤖 Copiloto de Enriquecimento IA")
+                st.info("Analisa este bloco procurando siglas ocultas (ex: SPB, CIP, STR) e sugere injeção de palavras-chave para passar nos robôs ATS.")
+
+                if st.button("⚡ Executar Copiloto neste Bloco", use_container_width=True):
+                    with st.spinner("Analisando bloco e consultando dicionário de domínio via Azure OpenAI..."):
+                        b_list_curr = [b.strip() for b in bullets_text.split("\n") if b.strip()]
+                        t_list_curr = [t.strip() for t in f_tags.split(",") if t.strip()]
+                        
+                        exp_data_payload = {
+                            "empresa": exp_curr['empresa'],
+                            "cargo": exp_curr['cargo'],
+                            "periodo_inicio": exp_curr['periodo_inicio'],
+                            "periodo_fim": exp_curr['periodo_fim'],
+                            "contexto_escopo": exp_curr.get('contexto_escopo', ''),
+                            "bullets_acervo": b_list_curr,
+                            "tags_dominio": t_list_curr
+                        }
+                        copilot_res = AIBrain.analyze_block_copilot(exp_data_payload)
+                        st.session_state[f"copilot_res_{exp_curr['id']}"] = copilot_res
+
+                copilot_stored = st.session_state.get(f"copilot_res_{exp_curr['id']}")
+                if copilot_stored:
+                    st.divider()
+                    
+                    # 1. Siglas Detectadas
+                    siglas_det = copilot_stored.get("siglas_detectadas", [])
+                    if siglas_det:
+                        st.write("##### 📌 Siglas & Termos Detectados:")
+                        for s in siglas_det:
+                            st.markdown(f"**{s.get('sigla')}**: {s.get('significado')}")
+                            st.caption(f"Conceitos Relacionados: {', '.join(s.get('conceitos', []))}")
+                    
+                    # 2. Tags Sugeridas
+                    tags_sug = copilot_stored.get("tags_sugeridas", [])
+                    if tags_sug:
+                        st.write("##### 🏷️ Sugestão de Palavras-Chave de Domínio:")
+                        st.write(", ".join([f"`{t}`" for t in tags_sug]))
+                        
+                        if st.button("➕ Aplicar Sugestões de Tags ao Bloco", key=f"btn_apply_tags_{exp_curr['id']}"):
+                            current_tags = [t.strip() for t in f_tags.split(",") if t.strip()]
+                            for ts in tags_sug:
+                                if ts not in current_tags:
+                                    current_tags.append(ts)
+                                    
+                            database.save_curacao_experiencia(
+                                exp_id=exp_curr['id'],
+                                empresa=exp_curr['empresa'],
+                                cargo=exp_curr['cargo'],
+                                periodo_inicio=exp_curr['periodo_inicio'],
+                                periodo_fim=exp_curr['periodo_fim'],
+                                ordem=exp_curr.get('ordem', 0),
+                                contexto_escopo=exp_curr.get('contexto_escopo', ''),
+                                bullets_acervo=bullets_raw,
+                                siglas_projetos=siglas_map,
+                                tags_dominio=current_tags
+                            )
+                            st.success("Tags aplicadas com sucesso!")
+                            st.rerun()
+
+                    # 3. Perguntas Provocativas
+                    pergs = copilot_stored.get("perguntas_provocativas", [])
+                    if pergs:
+                        st.write("##### ❓ Perguntas da IA para Resgatar Memórias:")
+                        for p in pergs:
+                            st.markdown(f"👉 *{p}*")
+
+    # --- SUB-ABA 3: FORMAÇÃO & CERTIFICAÇÕES ---
+    with cur_sub3:
+        st.write("### 🎓 Acervo de Formação, MBAs & Certificações")
+        
+        forms_list = database.get_curacao_formacao()
+        if forms_list:
+            df_forms = pd.DataFrame(forms_list)
+            st.dataframe(df_forms[["id", "tipo", "instituicao", "titulo", "ano", "relevancia_tags"]], use_container_width=True, hide_index=True)
+            
+        st.divider()
+        st.write("#### ➕ Cadastrar / Editar Formação ou Certificação:")
+        with st.form("form_add_formacao"):
+            col_f1, col_f2 = st.columns(2)
+            with col_f1:
+                f_tipo = st.selectbox("Tipo:", ["graduacao", "pos_mba", "certificacao", "curso"])
+                f_inst = st.text_input("Instituição:", placeholder="Ex: USP / PMI / Scrum Alliance")
+                f_ano = st.text_input("Ano / Período:", placeholder="Ex: 2022")
+            with col_f2:
+                f_titulo = st.text_input("Título / Nome:", placeholder="Ex: PMP / Certified Scrum Master")
+                f_tags_form = st.text_input("Tags de Relevância (separadas por vírgula):", placeholder="Ex: Agilidade, Governança, PMP")
+                
+            btn_save_form = st.form_submit_button("➕ Salvar Formação no Banco", type="primary")
+            if btn_save_form:
+                if not f_inst or not f_titulo:
+                    st.warning("Preencha Instituição e Título.")
+                else:
+                    t_arr = [t.strip() for t in f_tags_form.split(",") if t.strip()]
+                    database.save_curacao_formacao(None, f_tipo, f_inst, f_titulo, f_ano, t_arr)
+                    st.success("Formação salva com sucesso!")
+                    st.rerun()
+
+# ---------------------------------------------------------
+# ABA 4: FILTROS & CONFIGURAÇÕES (.ENV)
+# ---------------------------------------------------------
+with tab4:
     st.subheader("Parâmetros do Robô & Variáveis de Ambiente")
     st.write("Ajuste as preferências de busca, cargos, regiões e chaves de API sem precisar alterar o código.")
 
@@ -266,43 +485,23 @@ LINKEDIN_SALARY={salary_val}
             load_dotenv(ENV_FILE, override=True)
 
 # ---------------------------------------------------------
-# ABA 4: ACERVO & MATRIZ COMPETENCIAS.MD
+# ABA 5: ACERVO ORIGINAL & FONTES
 # ---------------------------------------------------------
-with tab4:
-    st.subheader("Gestão do Acervo de CVs & Matriz de Competências")
-    st.write("Adicione novos currículos/cartas de apresentação ou regenere a matriz de competências unificada do candidato.")
+with tab5:
+    st.subheader("Gestão do Acervo de CVs Originais & Fontes")
+    st.write("Adicione novos currículos/cartas de apresentação em PDF ou Word na pasta `source/`.")
 
     source_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "source"))
     files = [os.path.basename(f) for f in glob.glob(os.path.join(source_dir, "*")) if not os.path.basename(f).startswith(".") and not f.endswith(".pptx")]
 
-    col_a, col_b = st.columns([1, 1])
-    with col_a:
-        st.write("### 📁 Arquivos no Acervo (`source/`):")
-        for file in files:
-            st.markdown(f"- 📄 `{file}`")
+    st.write("### 📁 Arquivos no Acervo (`source/`):")
+    for file in files:
+        st.markdown(f"- 📄 `{file}`")
 
-        uploaded_files = st.file_uploader("Upload de Novos Currículos ou Cartas (.pdf, .doc, .docx):", accept_multiple_files=True, type=["pdf", "doc", "docx"])
-        if uploaded_files:
-            for uploaded_file in uploaded_files:
-                save_path = os.path.join(source_dir, uploaded_file.name)
-                with open(save_path, "wb") as f:
-                    f.write(uploaded_file.getbuffer())
-                st.success(f"Arquivo `{uploaded_file.name}` salvo em `source/`!")
-
-    with col_b:
-        st.write("### 🧠 Matriz Unificada (`Competencias.MD`)")
-        if st.button("⚡ Regenerar Matriz via LLM"):
-            with st.spinner("Analisando acervo e sintetizando matriz via Azure OpenAI..."):
-                try:
-                    AIBrain.generate_competencias_md()
-                    st.success("Matriz Competencias.MD regenerada com sucesso!")
-                except Exception as e:
-                    st.error(f"Erro ao regenerar matriz: {e}")
-
-        md_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "Competencias.MD"))
-        if os.path.exists(md_path):
-            with open(md_path, "r", encoding="utf-8") as f:
-                md_content = f.read()
-            st.markdown(md_content)
-        else:
-            st.info("Arquivo Competencias.MD não encontrado. Clique no botão acima para gerá-lo.")
+    uploaded_files = st.file_uploader("Upload de Novos Currículos ou Cartas (.pdf, .doc, .docx):", accept_multiple_files=True, type=["pdf", "doc", "docx"])
+    if uploaded_files:
+        for uploaded_file in uploaded_files:
+            save_path = os.path.join(source_dir, uploaded_file.name)
+            with open(save_path, "wb") as f:
+                f.write(uploaded_file.getbuffer())
+            st.success(f"Arquivo `{uploaded_file.name}` salvo em `source/`!")
