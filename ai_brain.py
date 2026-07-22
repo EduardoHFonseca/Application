@@ -231,17 +231,21 @@ class AIBrain:
     def analyze_block_copilot(cls, exp_data: Dict[str, Any]) -> Dict[str, Any]:
         """
         Analisa um bloco de experiência profissional com o Copiloto IA para:
-        1. Mapear siglas e termos técnicos.
-        2. Gerar sugestões de palavras-chave/conceitos de domínio (ex: SPB -> Operações Bancárias).
+        1. Mapear siglas e termos técnicos avançados (LLM, VLM, RAG, SPB, ERP, PMP, OWASP, etc.).
+        2. Gerar sugestões de palavras-chave/conceitos de domínio (ex: RAG -> Retrieval-Augmented Generation, Busca Semântica).
         3. Gerar 1 a 2 perguntas provocativas para resgatar memórias de conquistas e números reais.
         """
         system_prompt = (
-            "Você é um consultor especialista em carreira executiva e auditoria de currículos para robôs ATS.\n"
-            "Sua função é analisar os detalhes de uma experiência profissional específica do candidato e gerar insights e expansões de termos.\n\n"
+            "Você é um consultor especialista em carreira executiva de tecnologia e auditoria de currículos para robôs ATS.\n"
+            "Sua função é analisar os detalhes de uma experiência profissional específica do candidato e extrair TODAS AS SIGLAS, MODELOS DE IA, TECNOLOGIAS E TERMOS TÉCNICOS ESPECÍFICOS.\n\n"
+            "INSTRUÇÕES OBRIGATÓRIAS:\n"
+            "1. SIGLAS DETECTADAS: Identifique todas as siglas e acrônimos no texto (ex: RAG, LLM, VLM, Generative AI, PoC, POV, SPB, BACEN, ERP, ITIL, Jira) e forneça seu significado completo e os conceitos de mercado equivalentes.\n"
+            "2. TAGS SUGERIDAS: A lista de tags DEVE incluir obrigatoriamente as tecnologias, modelos de IA, ferramentas e conceitos de domínio específicos presentes no texto (ex: ['RAG / Retrieval-Augmented Generation', 'LLM (Large Language Models)', 'VLM (Vision Language Models)', 'Generative AI', 'PoC / PoV Prototipagem', 'Automação de Processos com IA']). Não retorne apenas termos genéricos como 'Gestão de Projetos'.\n"
+            "3. PERGUNTAS PROVOCATIVAS: Forneça 2 perguntas direcionadas para resgatar métricas ou regras específicas de negócio do candidato.\n\n"
             "Retorne a resposta OBRIGATORIAMENTE em formato JSON com as chaves:\n"
-            "- 'siglas_detectadas': lista de objetos [{'sigla': 'SPB', 'significado': 'Sistema de Pagamentos Brasileiro', 'conceitos': ['Operações Bancárias', 'Regulação BACEN', 'Liquidação Financeira']}]\n"
-            "- 'tags_sugeridas': lista de strings de palavras-chave/conceitos de indústria que esse bloco abrange (ex: ['Ambiente Regulado', 'Compliance', 'STR/CIP'])\n"
-            "- 'perguntas_provocativas': lista de 2 perguntas curtas e diretas para o candidato resgatar métricas ou regras específicas de negócio."
+            "- 'siglas_detectadas': lista de objetos [{'sigla': 'RAG', 'significado': 'Retrieval-Augmented Generation', 'conceitos': ['Busca Semântica com LLM', 'Arquitetura Híbrida de IA', 'Bancos Vetoriais']}]\n"
+            "- 'tags_sugeridas': lista de strings de tecnologias, frameworks e conceitos específicos de indústria\n"
+            "- 'perguntas_provocativas': lista de 2 perguntas curtas e diretas para o candidato."
         )
 
         user_prompt = (
@@ -265,7 +269,7 @@ class AIBrain:
             log.error(f"Erro no Copiloto de Análise de Bloco: {e}")
             return {
                 "siglas_detectadas": [],
-                "tags_sugeridas": ["TI Executiva", "Gestão de Projetos"],
+                "tags_sugeridas": ["Inteligência Artificial", "Gestão Executiva de TI"],
                 "perguntas_provocativas": ["Qual foi o principal resultado quantitativo ou orçamento gerido nesta posição?"]
             }
 

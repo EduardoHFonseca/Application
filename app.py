@@ -349,15 +349,41 @@ with tab3:
                     # 1. Siglas Detectadas
                     siglas_det = copilot_stored.get("siglas_detectadas", [])
                     if siglas_det:
-                        st.write("##### 📌 Siglas & Termos Detectados:")
+                        st.write("##### 📌 Siglas & Tecnologias Detectadas:")
                         for s in siglas_det:
                             st.markdown(f"**{s.get('sigla')}**: {s.get('significado')}")
-                            st.caption(f"Conceitos Relacionados: {', '.join(s.get('conceitos', []))}")
+                            if s.get('conceitos'):
+                                st.caption(f"Conceitos ATS: {', '.join(s.get('conceitos', []))}")
+                                
+                        if st.button("➕ Injetar Siglas & Conceitos no Dicionário do Bloco", key=f"btn_apply_siglas_{exp_curr['id']}", type="primary"):
+                            current_siglas = dict(siglas_map) if isinstance(siglas_map, dict) else {}
+                            for s in siglas_det:
+                                s_key = s.get('sigla')
+                                s_val = f"{s.get('significado')}"
+                                if s.get('conceitos'):
+                                    s_val += f" ({', '.join(s.get('conceitos'))})"
+                                current_siglas[s_key] = s_val
+                                
+                            database.save_curacao_experiencia(
+                                exp_id=exp_curr['id'],
+                                empresa=exp_curr['empresa'],
+                                cargo=exp_curr['cargo'],
+                                periodo_inicio=exp_curr['periodo_inicio'],
+                                periodo_fim=exp_curr['periodo_fim'],
+                                ordem=exp_curr.get('ordem', 0),
+                                contexto_escopo=exp_curr.get('contexto_escopo', ''),
+                                bullets_acervo=bullets_raw,
+                                siglas_projetos=current_siglas,
+                                tags_dominio=tags_arr
+                            )
+                            st.success("Siglas e conceitos de IA/Tecnologia injetados com sucesso!")
+                            st.rerun()
                     
+                    st.write(" ")
                     # 2. Tags Sugeridas
                     tags_sug = copilot_stored.get("tags_sugeridas", [])
                     if tags_sug:
-                        st.write("##### 🏷️ Sugestão de Palavras-Chave de Domínio:")
+                        st.write("##### 🏷️ Sugestão de Palavras-Chave de Domínio & Tech:")
                         st.write(", ".join([f"`{t}`" for t in tags_sug]))
                         
                         if st.button("➕ Aplicar Sugestões de Tags ao Bloco", key=f"btn_apply_tags_{exp_curr['id']}"):
@@ -381,6 +407,7 @@ with tab3:
                             st.success("Tags aplicadas com sucesso!")
                             st.rerun()
 
+                    st.write(" ")
                     # 3. Perguntas Provocativas
                     pergs = copilot_stored.get("perguntas_provocativas", [])
                     if pergs:
