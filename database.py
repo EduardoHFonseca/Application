@@ -4,6 +4,9 @@ import logging
 from typing import Optional, Dict, Any, List
 import psycopg2
 from psycopg2.extras import RealDictCursor
+from dotenv import load_dotenv
+
+load_dotenv()
 
 log = logging.getLogger(__name__)
 

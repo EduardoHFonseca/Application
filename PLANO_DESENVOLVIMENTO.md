@@ -107,6 +107,16 @@ Para permitir a orquestração robusta sob demanda pelo OpenClaw e a flexibilida
 - [ ] **[F4.4] Camada 3 - Template PDF Padrão Harvard/Corporate Executivo:**
   - Layout denso e otimizado para robôs de recrutamento (ATS).
 
+### [Fase 5] Suporte a Vagas Internas / Mensagens Diretas & Auto-Detecção de Idioma (26/07/2026)
+- [x] **[F5.1] Modo Descritivo Direto em Tab 2 (`app.py`):**
+  - Adicionada opção de entrada por Copy + Paste de descritivo completo para vagas internas, WhatsApp ou documentos.
+  - Registro automático na tabela `vagas` do PostgreSQL com ID `manual_<timestamp>` e geração instantânea de PDF customizado.
+- [x] **[F5.2] Auto-Detecção de Idioma & Otimização de Títulos (`ai_brain.py`):**
+  - Implementada detecção automática do idioma da vaga (Inglês x Português) para geração integral do CV no mesmo idioma.
+  - Adicionada regra estrita para títulos executivos curtos (máximo 3 a 5 palavras, sem slogans/frases) e quebra de linha dinâmica no PDF (`multi_cell`).
+- [x] **[F5.3] Parser Defensivo de Destaques de Experiência:**
+  - Implementado `format_experience_content` para converter listas/dicionários JSON do LLM em marcadores (*bullets*) limpos sem exibições de sintaxe de código no PDF.
+
 ---
 
 ## 4. Instruções de Execução em Servidor/VM Headless (SSH)

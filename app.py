@@ -176,31 +176,126 @@ with tab1:
 # ABA 2: CANDIDATURA SOB DEMANDA
 # ---------------------------------------------------------
 with tab2:
-    st.subheader("Candidatura Direta Sob Demanda")
-    st.write("Insira a URL de uma vaga específica do LinkedIn para disparar o pipeline completo de candidatura imediata (extração, IA, customização de CV e submissão).")
+    st.subheader("Candidatura Direta Sob Demanda & Geração de CV")
+    st.write("Escolha o formato de origem da vaga: por URL pública do LinkedIn ou colando o descritivo direto de uma vaga interna, WhatsApp ou documento.")
 
-    input_url = st.text_input("URL da Vaga no LinkedIn:", placeholder="https://www.linkedin.com/jobs/view/4123456789/")
+    mode = st.radio(
+        "Selecione o Modo de Origem da Vaga:",
+        ["🌐 URL do LinkedIn (Crawler & Aplicação Automática)", "📝 Descritivo Direto / Vaga Interna (Copy + Paste)"],
+        index=0
+    )
 
-    if st.button("🚀 Iniciar Candidatura Sob Demanda"):
-        if not input_url.strip():
-            st.warning("Por favor, informe uma URL válida.")
-        else:
-            st.info(f"Iniciando candidatura para: {input_url}")
-            log_container = st.empty()
-            
-            cmd = [sys.executable, "playwright_bot.py", "--url", input_url.strip()]
-            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, cwd=os.path.dirname(__file__))
-            
-            full_log = ""
-            for line in proc.stdout:
-                full_log += line
-                log_container.code(full_log[-2000:], language="log")
-            
-            proc.wait()
-            if proc.returncode == 0:
-                st.success("Candidatura sob demanda processada com sucesso!")
+    st.divider()
+
+    if mode.startswith("🌐"):
+        st.write("Insira a URL de uma vaga específica do LinkedIn para disparar o pipeline completo de candidatura imediata (extração, IA, customização de CV e submissão).")
+
+        input_url = st.text_input("URL da Vaga no LinkedIn:", placeholder="https://www.linkedin.com/jobs/view/4123456789/")
+
+        if st.button("🚀 Iniciar Candidatura Sob Demanda"):
+            if not input_url.strip():
+                st.warning("Por favor, informe uma URL válida.")
             else:
-                st.error("Ocorreu uma falha durante o processamento da candidatura. Verifique os logs acima.")
+                st.info(f"Iniciando candidatura para: {input_url}")
+                log_container = st.empty()
+                
+                cmd = [sys.executable, "playwright_bot.py", "--url", input_url.strip()]
+                proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, cwd=os.path.dirname(__file__))
+                
+                full_log = ""
+                for line in proc.stdout:
+                    full_log += line
+                    log_container.code(full_log[-2000:], language="log")
+                
+                proc.wait()
+                if proc.returncode == 0:
+                    st.success("Candidatura sob demanda processada com sucesso!")
+                else:
+                    st.error("Ocorreu uma falha durante o processamento da candidatura. Verifique os logs acima.")
+
+    else:
+        st.write("Cole o título e a descrição completa de uma vaga interna ou recebida por mensagem/documento para gerar um currículo customizado (PDF & ATS) instantaneamente.")
+
+        col_v1, col_v2, col_v3 = st.columns([2, 1, 1])
+        with col_v1:
+            f_titulo = st.text_input("Título do Cargo / Vaga:", placeholder="Ex: AI Product Manager / Head de TI")
+        with col_v2:
+            f_empresa = st.text_input("Empresa / Depto:", value="Vaga Interna")
+        with col_v3:
+            f_lang = st.selectbox("Idioma do CV:", ["🌐 Auto-detectar pelo Idioma da Vaga", "🇺🇸 Forçar Inglês", "🇧🇷 Forçar Português"])
+
+        f_descricao = st.text_area("Descritivo Completo & Requisitos da Vaga (Copy + Paste):", height=250, placeholder="Cole aqui as responsabilidades, requisitos e detalhes da vaga...")
+
+        if st.button("🚀 Gerar Currículo Customizado (PDF & ATS)", type="primary"):
+            if not f_titulo.strip() or not f_descricao.strip():
+                st.warning("Por favor, preencha o Título do Cargo e o Descritivo da Vaga.")
+            else:
+                custom_job_id = f"manual_{int(time.time())}"
+                output_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "custom_cvs"))
+                os.makedirs(output_dir, exist_ok=True)
+                pdf_path = os.path.join(output_dir, f"cv_vaga_{custom_job_id}.pdf")
+
+                lang_param = "en" if "Inglês" in f_lang else ("pt" if "Português" in f_lang else "auto")
+
+                with st.spinner("Analisando descritivo e sintetizando currículo via Base Mestra Fact-Based no PostgreSQL..."):
+                    try:
+                        cv_data = AIBrain.customize_cv_text(
+                            competencias_text="",
+                            job_title=f_titulo.strip(),
+                            job_description=f_descricao.strip(),
+                            language=lang_param
+                        )
+                        AIBrain.generate_pdf(cv_data, pdf_path)
+
+                        db_job_id = database.save_or_update_job(
+                            linkedin_job_id=custom_job_id,
+                            url="manual/interna",
+                            titulo=f_titulo.strip(),
+                            empresa=f_empresa.strip(),
+                            localizacao="Interna/Remoto",
+                            descricao=f_descricao.strip(),
+                            status="cv_gerado",
+                            pdf_custom_path=pdf_path
+                        )
+
+                        st.success("🎉 Currículo customizado gerado com sucesso!")
+                        st.session_state["last_generated_cv"] = {
+                            "title": f_titulo,
+                            "cv_data": cv_data,
+                            "pdf_path": pdf_path,
+                            "job_id": db_job_id
+                        }
+                    except Exception as e:
+                        st.error(f"Erro ao gerar currículo: {e}")
+
+        # Exibe a prévia e botão de download se houver um CV recém-gerado
+        last_cv = st.session_state.get("last_generated_cv")
+        if last_cv and os.path.exists(last_cv["pdf_path"]):
+            st.divider()
+            st.subheader("📄 Prévia do Currículo Gerado para a Vaga Interna")
+
+            cv_data = last_cv["cv_data"]
+
+            p_col1, p_col2 = st.columns([3, 1])
+            with p_col1:
+                st.markdown(f"**Título Profissional Customizado:** `{cv_data.get('title', last_cv['title'])}`")
+                st.markdown(f"**Resumo Profissional Executivo:**\n{cv_data.get('summary', '')}")
+                skills_list = cv_data.get('highlighted_skills', [])
+                st.markdown(f"**Habilidades Chave ATS:** " + ", ".join([f"`{s}`" for s in skills_list]))
+            with p_col2:
+                with open(last_cv["pdf_path"], "rb") as f:
+                    st.download_button(
+                        label="📥 Download do CV (PDF)",
+                        data=f.read(),
+                        file_name=f"Curriculo_{last_cv['title'].replace(' ', '_')}.pdf",
+                        mime="application/pdf",
+                        use_container_width=True,
+                        type="primary"
+                    )
+
+            with st.expander("🔍 Inspecionar Histórico e Experiências Selecionadas no PDF"):
+                exp_text = cv_data.get("full_original_experience", "")
+                st.text(exp_text)
 
 # ---------------------------------------------------------
 # ABA 3: CURAÇÃO DA BASE MESTRA (FACT-BASED & COPILOTO IA)

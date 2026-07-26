@@ -335,9 +335,10 @@ class AIBrain:
             return cls.get_competencias_context()
 
     @classmethod
-    def customize_cv_text(cls, competencias_text: str, job_title: str, job_description: str) -> Dict[str, str]:
+    def customize_cv_text(cls, competencias_text: str, job_title: str, job_description: str, language: str = "auto") -> Dict[str, str]:
         """
         Usa o LLM para sintetizar um currículo focado na vaga a partir da Base Mestra Fact-Based.
+        Auto-detecta o idioma da vaga (Inglês x Português) e gera o CV no mesmo idioma.
         """
         # Tenta obter a Base Mestra Fact-Based do banco de dados
         fact_context = cls.get_curacao_cv_context()
@@ -347,13 +348,19 @@ class AIBrain:
             "Sua tarefa é extrair e sintetizar informações da BASE MESTRA FACT-BASED do candidato para criar um currículo "
             "extremamente personalizado e de alto impacto para a vaga informada.\n\n"
             "DIRETRIZES DE REDAÇÃO EXECUÇÕES E REGRAS INVIOLÁVEIS:\n"
-            "1. JANELAS CRONOLÓGICAS FIXAS: Mantenha rigorosamente as datas e empresas originais da linha do tempo. Jamais altere nomes de empresas ou períodos.\n"
-            "2. SELEÇÃO CIRÚRGICA DE BULLETS (1 a 3 por empresa): Para cada empresa na linha do tempo, selecione no máximo 2 a 3 conquistas do acervo que sejam mais relevantes e aderentes aos requisitos da vaga.\n"
-            "3. EXPANSÃO DE CONCEITOS E SIGLAS: Se a vaga pedir competências técnicas ou de regulação (ex: 'Operações Bancárias', 'Ambiente Regulado', 'Agilidade', 'Cloud'), consulte o acervo de siglas/tags (ex: SPB = Operações Bancárias BACEN) e inclua os conceitos correspondentes de forma orgânica nos bullets.\n"
-            "4. RESUMO DE QUALIFICAÇÕES (SUMMARY): Elabore um parágrafo executivo denso de 3 a 5 linhas alinhando a bagagem do candidato exatamente com a senioridade e os desafios da vaga.\n"
-            "5. NENHUMA ALUCINAÇÃO: Utilize apenas os fatos, métricas e projetos presentes na Base Mestra. Nunca invente dados.\n\n"
+            "1. IDIOMA OBRIGATÓRIO (CRÍTICO): O currículo gerado DEVE seguir rigorosamente o idioma principal da VAGA ALVO (Título e Descrição).\n"
+            "   - Se a vaga (Título ou Descrição) estiver em INGLÊS, TODO O CONTEÚDO (Título, Resumo, Bullets, Habilidades e Seções) DEVE SER REDIGIDO EM INGLÊS EXECUÇÃO FLUENTE.\n"
+            "   - Se a vaga estiver em PORTUGUÊS, retorne em Português.\n"
+            "   - Traduza títulos de cargos e conquistas para o idioma correspondente quando apropriado para o mercado executivo.\n"
+            "2. JANELAS CRONOLÓGICAS FIXAS: Mantenha rigorosamente as datas e empresas originais da linha do tempo. Jamais altere nomes de empresas ou períodos.\n"
+            "3. SELEÇÃO CIRÚRGICA DE BULLETS (1 a 3 por empresa): Para cada empresa na linha do tempo, selecione no máximo 2 a 3 conquistas do acervo que sejam mais relevantes e aderentes aos requisitos da vaga.\n"
+            "4. EXPANSÃO DE CONCEITOS E SIGLAS: Se a vaga pedir competências técnicas ou de regulação (ex: 'Operações Bancárias', 'Ambiente Regulado', 'Agilidade', 'Cloud'), consulte o acervo de siglas/tags (ex: SPB = Operações Bancárias BACEN) e inclua os conceitos correspondentes de forma orgânica nos bullets.\n"
+            "5. RESUMO DE QUALIFICAÇÕES (SUMMARY): Elabore um parágrafo executivo denso de 3 a 5 linhas alinhando a bagagem do candidato exatamente com a senioridade e os desafios da vaga no idioma correto.\n"
+            "6. TÍTULO PROFISSIONAL CURTO E EXECUTIVO: O campo 'title' DEVE SER CONCISO E DIRETO (no máximo 3 a 5 palavras), correspondendo estritamente ao nível e cargo alvo (ex: 'Senior Product Manager', 'Head of AI & Technology', 'IT Director', 'AI Product Manager'). JAMAIS inclua slogans, qualificações longas ou sub-frases no título.\n"
+            "7. NENHUMA ALUCINAÇÃO: Utilize apenas os fatos, métricas e projetos presentes na Base Mestra. Nunca invente dados.\n\n"
             "Retorne um JSON puro com as seguintes chaves:\n"
-            "- 'title': Título profissional personalizado para a vaga\n"
+            "- 'detected_language': Idioma detectado e utilizado ('en' ou 'pt')\n"
+            "- 'title': Título profissional curto e direto (máximo 3 a 5 palavras)\n"
             "- 'summary': Resumo profissional executivo adaptado para a vaga\n"
             "- 'highlighted_skills': Lista de 6 a 10 habilidades/palavras-chave essenciais para passar nos filtros ATS da vaga\n"
             "- 'experience_highlights': Destaques de experiência alinhados aos requisitos principais\n"
@@ -361,6 +368,7 @@ class AIBrain:
         )
         
         user_prompt = (
+            f"IDIOMA PREFERENCIAL: {language}\n"
             f"VAGA ALVO:\nTítulo: {job_title}\nDescrição:\n{job_description}\n\n"
             f"BASE MESTRA FACT-BASED DO CANDIDATO:\n{fact_context}"
         )
@@ -426,7 +434,7 @@ class AIBrain:
         # Título Profissional Customizado
         pdf.set_font("Helvetica", "B", 14)
         pdf.set_text_color(50)
-        pdf.cell(0, 8, sanitize_text(data.get("title", "Product Specialist")), new_x="LMARGIN", new_y="NEXT", align="L")
+        pdf.multi_cell(0, 6, sanitize_text(data.get("title", "Product Specialist")), new_x="LMARGIN", new_y="NEXT", align="L")
         pdf.ln(3)
         
         # Linha separadora
@@ -434,10 +442,62 @@ class AIBrain:
         pdf.line(10, pdf.get_y(), 200, pdf.get_y())
         pdf.ln(5)
         
+        lang = data.get("detected_language", "en").lower()
+        if lang == "en":
+            lbl_summary = "PROFESSIONAL SUMMARY"
+            lbl_skills = "HIGHLIGHTED SKILLS"
+            lbl_align = "EXPERIENCE ALIGNMENT"
+            lbl_exp = "PROFESSIONAL EXPERIENCE & EDUCATION"
+        else:
+            lbl_summary = "RESUMO PROFISSIONAL"
+            lbl_skills = "PRINCIPAIS HABILIDADES"
+            lbl_align = "ALINHAMENTO DE EXPERIÊNCIA"
+            lbl_exp = "HISTÓRICO PROFISSIONAL E FORMAÇÃO"
+
+        def format_experience_content(val) -> str:
+            if not val:
+                return ""
+            if isinstance(val, str):
+                return val
+            if isinstance(val, list):
+                out_lines = []
+                for item in val:
+                    if isinstance(item, str):
+                        out_lines.append(item)
+                    elif isinstance(item, dict):
+                        comp = item.get("company") or item.get("empresa") or ""
+                        role = item.get("role") or item.get("position") or item.get("cargo") or item.get("title") or ""
+                        period = item.get("period") or item.get("date") or item.get("periodo") or item.get("duration") or ""
+                        
+                        header_parts = []
+                        if role and comp:
+                            header_parts.append(f"{comp} | {role}")
+                        elif comp or role:
+                            header_parts.append(comp or role)
+                        if period:
+                            header_parts.append(f"({period})")
+                        
+                        if header_parts:
+                            out_lines.append(" ".join(header_parts))
+                        
+                        bullets = item.get("bullets") or item.get("responsibilities") or item.get("description") or item.get("descricao") or []
+                        if isinstance(bullets, list):
+                            for b in bullets:
+                                out_lines.append(f"• {b}")
+                        elif isinstance(bullets, str):
+                            out_lines.append(f"• {bullets}")
+                        out_lines.append("") # linha em branco para separar
+                    else:
+                        out_lines.append(str(item))
+                return "\n".join(out_lines)
+            if isinstance(val, dict):
+                return format_experience_content([val])
+            return str(val)
+
         # Seção: Resumo Profissional
         pdf.set_font("Helvetica", "B", 12)
         pdf.set_text_color(15, 33, 253)
-        pdf.cell(0, 6, "PROFESSIONAL SUMMARY / RESUMO PROFISSIONAL", new_x="LMARGIN", new_y="NEXT")
+        pdf.cell(0, 6, lbl_summary, new_x="LMARGIN", new_y="NEXT")
         pdf.ln(2)
         pdf.set_font("Helvetica", "", 10)
         pdf.set_text_color(50)
@@ -447,7 +507,7 @@ class AIBrain:
         # Seção: Habilidades em Destaque
         pdf.set_font("Helvetica", "B", 12)
         pdf.set_text_color(15, 33, 253)
-        pdf.cell(0, 6, "HIGHLIGHTED SKILLS / PRINCIPAIS HABILIDADES", new_x="LMARGIN", new_y="NEXT")
+        pdf.cell(0, 6, lbl_skills, new_x="LMARGIN", new_y="NEXT")
         pdf.ln(2)
         pdf.set_font("Helvetica", "", 10)
         pdf.set_text_color(50)
@@ -456,56 +516,27 @@ class AIBrain:
         pdf.ln(5)
         
         # Seção: Destaques de Experiência Adequada
-        if data.get("experience_highlights"):
+        exp_highlights_text = format_experience_content(data.get("experience_highlights"))
+        if exp_highlights_text.strip():
             pdf.set_font("Helvetica", "B", 12)
             pdf.set_text_color(15, 33, 253)
-            pdf.cell(0, 6, "EXPERIENCE ALIGNMENT / ALINHAMENTO DE EXPERIÊNCIA", new_x="LMARGIN", new_y="NEXT")
+            pdf.cell(0, 6, lbl_align, new_x="LMARGIN", new_y="NEXT")
             pdf.ln(2)
             pdf.set_font("Helvetica", "", 10)
             pdf.set_text_color(50)
-            pdf.multi_cell(0, 5, sanitize_text(data.get("experience_highlights", "")))
+            pdf.multi_cell(0, 5, sanitize_text(exp_highlights_text))
             pdf.ln(5)
             
         # Seção: Histórico Profissional
         pdf.set_font("Helvetica", "B", 12)
         pdf.set_text_color(15, 33, 253)
-        pdf.cell(0, 6, "PROFESSIONAL EXPERIENCE & EDUCATION / HISTÓRICO PROFISSIONAL", new_x="LMARGIN", new_y="NEXT")
+        pdf.cell(0, 6, lbl_exp, new_x="LMARGIN", new_y="NEXT")
         pdf.ln(2)
         pdf.set_font("Helvetica", "", 10)
         pdf.set_text_color(50)
         
-        # Multi_cell para todo o texto das experiências originais adaptadas de forma limpa
-        original_exp = data.get("full_original_experience", "")
-        parsed_lines = []
-        
-        if isinstance(original_exp, list):
-            for item in original_exp:
-                if isinstance(item, dict):
-                    # O LLM enviou um JSON estruturado para cada experiência
-                    pos = item.get('position', item.get('title', item.get('role', '')))
-                    period = item.get('period', item.get('date', item.get('duration', '')))
-                    company = item.get('company', item.get('empresa', ''))
-                    
-                    header = str(pos)
-                    if company: header += f" - {company}"
-                    if period: header += f" | {period}"
-                    
-                    parsed_lines.append(header)
-                    
-                    resp = item.get('responsibilities', item.get('description', item.get('descricao', [])))
-                    if isinstance(resp, list):
-                        for r in resp:
-                            parsed_lines.append(f"• {r}")
-                    elif isinstance(resp, str):
-                        parsed_lines.append(resp)
-                        
-                    parsed_lines.append("") # Linha em branco para separar
-                else:
-                    parsed_lines.extend(str(item).split("\n"))
-            lines = parsed_lines
-        else:
-            lines = str(original_exp).split("\n")
-            
+        original_exp = format_experience_content(data.get("full_original_experience"))
+        lines = original_exp.split("\n")
         cleaned_lines = [sanitize_text(l) for l in lines if "Eduardo M." not in l and "Terra" not in l and "992" not in l]
         pdf.multi_cell(0, 5, "\n".join(cleaned_lines))
         
