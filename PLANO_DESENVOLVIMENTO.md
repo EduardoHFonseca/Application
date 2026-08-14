@@ -98,11 +98,11 @@ Para permitir a orquestração robusta sob demanda pelo OpenClaw e a flexibilida
 ### [Fase 4] Reformulação do Gerador de CVs (Arquitetura Fact-Based)
 - [x] **[F4.1] Camada 1 - Base Mestra Fact-Based no PostgreSQL:**
   - Criadas tabelas `curacao_qualificacoes`, `curacao_experiencias` e `curacao_formacao` no `application_db`.
-  - Implementado `seed_curacao.py` para auto-clustering sem truncamento de texto, populando 14 Janelas Cronológicas ordenadas do presente até 1997 (incluindo Kantar, FlexVision 2014-2016, ADM 2001-2007 com SPB/BACEN/SOX, etc.).
+  - Implementado `seed_curacao.py` para auto-clustering sem truncamento de texto, populando 14 Janelas Cronológicas ordenadas do presente até 1997 (incluindo IBOPE, FlexVision 2014-2016, ADM 2001-2007 com SPB/BACEN/SOX, etc.).
 - [x] **[F4.2] Painel de Curação no Streamlit & Copiloto IA (`app.py`):**
   - Implementada a aba "🧩 Curação da Base Mestra" com layout em 2 colunas e Copiloto de IA para detecção de siglas (LLM, VLM, RAG, PoC, SPB), sugestão de tags de domínio e botão de injeção direta no dicionário do bloco em 1 clique.
 - [ ] **[F4.3] Sessão de Entrevista Executiva por Janela:**
-  - Janela 1 (Kantar IBOPE Media 2024-Atual): Concluída e refinada.
+  - Janela 1 (IBOPE Media 2024-Atual): Concluída e refinada.
   - Janelas 2 a 14 (Freelance a RHT System): Pendentes para a próxima sessão de entrevista guiada.
 - [ ] **[F4.4] Camada 3 - Template PDF Padrão Harvard/Corporate Executivo:**
   - Layout denso e otimizado para robôs de recrutamento (ATS).

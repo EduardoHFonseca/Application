@@ -405,7 +405,7 @@ class AIBrain:
         class PDF(FPDF):
             def header(self):
                 # Cabeçalho elegante
-                self.set_fill_color(15, 33, 253) # Kantar Blue (#0F21FD)
+                self.set_fill_color(15, 33, 253) # Ibope Blue (#0F21FD)
                 self.rect(0, 0, 210, 15, "F")
                 self.ln(10)
                 

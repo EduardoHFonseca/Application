@@ -23,7 +23,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Estilização visual inspirada na identidade Kantar / AdInsights
+# Estilização visual inspirada na identidade IBOPE / AdInsights
 st.markdown("""
     <style>
     .main {

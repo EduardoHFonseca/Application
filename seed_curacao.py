@@ -42,7 +42,7 @@ def seed_curacao(force_reseed=True):
         "Você é um arquiteto de carreiras e recrutador executivo de TI e Gestão de Produtos.\n"
         "Sua tarefa é extrair TODAS AS EXPERIÊNCIAS PROFISSIONAIS do candidato contidas nos currículos, sem omitir nenhuma empresa.\n\n"
         "A LINHA DO TEMPO DEVE SER ORDENADA STRICTAMENTE DA MAIS RECENTE PARA A MAIS ANTIGA (ORDEM 1, 2, 3...):\n"
-        "1. Kantar IBOPE Media (2024 - Atual)\n"
+        "1. IBOPE Media (2024 - Atual)\n"
         "2. Consultor de Tecnologia / Freelance (2022 - 2024)\n"
         "3. NAVA Technology for Business (2020 - 2022)\n"
         "4. Nova Agri / Toyota Tsusho (2017 - 2020)\n"
