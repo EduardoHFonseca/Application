@@ -27,3 +27,7 @@ state.json
 execution*.log
 *.db
 *.sqlite
+
+# Virtualenv
+.venv/
+venv/

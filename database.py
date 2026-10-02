@@ -17,11 +17,38 @@ def get_connection(db_url: str = None) -> psycopg2.extensions.connection:
     conn = psycopg2.connect(url)
     return conn
 
+EXPECTED_TABLES = (
+    "vagas",
+    "perguntas_respostas",
+    "curacao_qualificacoes",
+    "curacao_experiencias",
+    "curacao_formacao",
+)
+
+def tables_exist(cursor) -> bool:
+    """True se todas as tabelas esperadas já existem no schema corrente."""
+    cursor.execute("""
+        SELECT table_name FROM information_schema.tables
+        WHERE table_schema = current_schema()
+          AND table_name = ANY(%s)
+    """, (list(EXPECTED_TABLES),))
+    return len(cursor.fetchall()) == len(EXPECTED_TABLES)
+
 def init_db(db_url: str = None):
-    """Inicializa as tabelas do banco de dados PostgreSQL."""
+    """Inicializa as tabelas do banco de dados PostgreSQL.
+
+    O DDL é criado pelo papel administrador (schema.sql). O usuário de serviço
+    não tem CREATE no schema, então aqui apenas criamos o que faltar.
+    """
     conn = get_connection(db_url)
     cursor = conn.cursor()
-    
+
+    if tables_exist(cursor):
+        cursor.close()
+        conn.close()
+        log.info("Tabelas já existem; DDL não é necessário.")
+        return
+
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS vagas (
             id SERIAL PRIMARY KEY,
