@@ -1,0 +1,23 @@
+# Dependências do projeto Application (raiz) — instaladas no .venv
+# Gerado e testado em: Python 3.12.3 / Ubuntu 24.04 LTS
+# Instalação: .venv/bin/pip install -r requirements.txt
+# Depois:     .venv/bin/playwright install --with-deps chromium
+
+# Dashboard Streamlit (app.py)
+streamlit==1.66.0
+pandas==3.0.6
+
+# Motor de automação (playwright_bot.py) — substitui o Selenium legado do bot-core/
+playwright==1.64.0
+
+# Cérebro IA (ai_brain.py)
+requests==2.34.2
+pypdf==6.21.1
+python-docx==1.2.0
+fpdf2==2.8.9
+
+# Persistência PostgreSQL (database.py)
+psycopg2-binary==2.9.13
+
+# Configuração (.env)
+python-dotenv==1.2.4

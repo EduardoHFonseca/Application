@@ -12,7 +12,9 @@ from typing import List, Dict, Tuple, Any
 from fpdf import FPDF
 from dotenv import load_dotenv
 
-load_dotenv()
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+load_dotenv(os.path.join(BASE_DIR, ".env"))
 
 log = logging.getLogger(__name__)
 
@@ -105,7 +107,7 @@ class AIBrain:
         """
         Lê todos os PDFs e documentos Word na pasta source/ e extrai seus conteúdos textuais.
         """
-        source_dir = "/home/efonseca/workspace/Application/source"
+        source_dir = os.path.join(BASE_DIR, "source")
         all_files = glob.glob(os.path.join(source_dir, "*"))
         cvs = []
         for file_path in all_files:
@@ -122,10 +124,12 @@ class AIBrain:
         return cvs
 
     @classmethod
-    def generate_competencias_md(cls, output_path: str = "/home/efonseca/workspace/Application/Competencias.MD") -> str:
+    def generate_competencias_md(cls, output_path: str = None) -> str:
         """
         Sintetiza todos os documentos de currículos e cartas de source/ em uma matriz unificada Competencias.MD.
         """
+        if not output_path:
+            output_path = os.path.join(BASE_DIR, "Competencias.MD")
         log.info("Iniciando geração da matriz unificada Competencias.MD...")
         cvs = cls.get_base_cvs()
         if not cvs:
@@ -174,7 +178,7 @@ class AIBrain:
 
     @classmethod
     def get_competencias_context(cls) -> str:
-        md_path = "/home/efonseca/workspace/Application/Competencias.MD"
+        md_path = os.path.join(BASE_DIR, "Competencias.MD")
         if not os.path.exists(md_path):
             return cls.generate_competencias_md(md_path)
         with open(md_path, "r", encoding="utf-8") as f:
