@@ -3,6 +3,7 @@ import glob
 import json
 import logging
 import re
+import time
 import zipfile
 import xml.etree.ElementTree as ET
 import requests
@@ -94,9 +95,30 @@ class AIBrain:
                 payload["messages"] = messages
             payload["response_format"] = {"type": "json_object"}
 
-        response = requests.post(url, json=payload, headers=headers, timeout=180)
-        response.raise_for_status()
-        return response.json()["choices"][0]["message"]["content"].strip()
+        # O roteador devolve 502/503/429 quando todas as rotas estão em cooldown
+        # (ex: OVH 2 req/min, Groq TPM). São transitórios: aguarda e tenta de novo
+        # com backoff exponencial antes de desistir.
+        attempts = int(os.getenv("LLM_RETRY_ATTEMPTS", "4"))
+        delay = float(os.getenv("LLM_RETRY_DELAY", "5"))
+        last_error = None
+        for attempt in range(1, attempts + 1):
+            try:
+                response = requests.post(url, json=payload, headers=headers, timeout=180)
+                response.raise_for_status()
+                return response.json()["choices"][0]["message"]["content"].strip()
+            except requests.exceptions.HTTPError as e:
+                status = e.response.status_code if e.response is not None else None
+                if status in (429, 500, 502, 503, 504) and attempt < attempts:
+                    log.warning(
+                        "Roteador %s (tentativa %d/%d); aguardando %.0fs...",
+                        status, attempt, attempts, delay
+                    )
+                    time.sleep(delay)
+                    delay *= 2
+                    last_error = e
+                    continue
+                raise
+        raise last_error
 
     @classmethod
     def _call_llm_azure(cls, messages: List[Dict[str, str]], response_format: str = "text") -> str:
