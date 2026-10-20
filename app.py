@@ -556,6 +556,15 @@ with tab4:
         interval_val = st.number_input("Intervalo do Scheduler (horas):", min_value=1.0, max_value=24.0, value=float(os.getenv("CRAWLER_INTERVAL_HOURS", "4")), step=1.0)
 
         st.divider()
+        st.write("### 📄 Geração de Currículo (PDF)")
+        template_val = st.selectbox(
+            "Template do PDF gerado:",
+            options=["harvard", "corporate"],
+            index=0 if os.getenv("CV_TEMPLATE", "harvard").strip().lower() != "corporate" else 1,
+            help="harvard = layout denso single-column otimizado para ATS (padrão) | corporate = layout legado com faixa de cor",
+        )
+
+        st.divider()
         st.write("### 🔑 Credenciais do LinkedIn")
         user_val = st.text_input("Usuário / E-mail:", value=os.getenv("LINKEDIN_USERNAME", ""))
         pass_val = st.text_input("Senha:", value=os.getenv("LINKEDIN_PASSWORD", ""), type="password")
@@ -592,6 +601,9 @@ LINKEDIN_PHONE_NUMBER={phone_val}
 
 # PostgreSQL Database Configuration
 DATABASE_URL={os.getenv('DATABASE_URL', 'postgresql://efonseca:123456@localhost:5432/application_db')}
+
+# PDF Curriculum Template (harvard | corporate)
+CV_TEMPLATE={template_val}
 
 # Crawler Scheduler Configuration
 CRAWLER_INTERVAL_HOURS={interval_val}

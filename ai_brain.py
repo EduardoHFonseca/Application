@@ -395,24 +395,324 @@ class AIBrain:
                 "full_original_experience": fact_context[:2000]
             }
 
+    # ------------------------------------------------------------------
+    # Camada 3 - Geração de PDF (templates 'harvard' e 'corporate')
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _sanitize_pdf_text(text: str) -> str:
+        """Normaliza caracteres incompatíveis com as fontes core do fpdf2 (Helvetica)."""
+        if not isinstance(text, str):
+            text = str(text)
+        return (text.replace("–", "-").replace("—", "-").replace("“", '"').replace("”", '"')
+                    .replace("’", "'").replace("‘", "'").replace("•", "-").replace(" ", " "))
+
+    @staticmethod
+    def _format_experience_content(val) -> str:
+        """Converte o payload de experiência (str, lista ou dicts do LLM) em texto plano estruturado."""
+        if not val:
+            return ""
+        if isinstance(val, str):
+            return val
+        if isinstance(val, list):
+            out_lines = []
+            for item in val:
+                if isinstance(item, str):
+                    out_lines.append(item)
+                elif isinstance(item, dict):
+                    comp = item.get("company") or item.get("empresa") or ""
+                    role = item.get("role") or item.get("position") or item.get("cargo") or item.get("title") or ""
+                    period = item.get("period") or item.get("date") or item.get("periodo") or item.get("duration") or ""
+
+                    header_parts = []
+                    if role and comp:
+                        header_parts.append(f"{comp} | {role}")
+                    elif comp or role:
+                        header_parts.append(comp or role)
+                    if period:
+                        header_parts.append(f"({period})")
+
+                    if header_parts:
+                        out_lines.append(" ".join(header_parts))
+
+                    bullets = item.get("bullets") or item.get("responsibilities") or item.get("description") or item.get("descricao") or []
+                    if isinstance(bullets, list):
+                        for b in bullets:
+                            out_lines.append(f"• {b}")
+                    elif isinstance(bullets, str):
+                        out_lines.append(f"• {bullets}")
+                    out_lines.append("")  # linha em branco para separar
+                else:
+                    out_lines.append(str(item))
+            return "\n".join(out_lines)
+        if isinstance(val, dict):
+            return AIBrain._format_experience_content([val])
+        return str(val)
+
+    @staticmethod
+    def _parse_experience_blocks(text: str) -> List[Dict[str, Any]]:
+        """
+        Converte o histórico em blocos estruturados para renderização:
+        - {'kind': 'entry', 'company': str, 'role': str, 'period': str, 'bullets': [str]}
+        - {'kind': 'text', 'lines': [str]}   (ex.: formação, certificações, observações)
+
+        Formatos de cabeçalho aceitos (produzidos pelo LLM e pelo acervo):
+          'EMPRESA | CARGO (PERIODO)'
+          'EMPRESA | CARGO'
+          'CARGO - EMPRESA (AAAA - AAAA)'
+          'EMPRESA (AAAA - AAAA)'
+        """
+        blocks: List[Dict[str, Any]] = []
+        entry_re = re.compile(r"^(?P<company>[^|]+?)\s*\|\s*(?P<rest>.+)$")
+        period_re = re.compile(r"^(?P<head>.*?)\s*[\(\[](?P<period>(?:19|20)\d{2}\s*[-–/a-zA-ZÁ-ú][^)\]]*)[\)\]]\s*$")
+        bullet_chars = ("•", "-", "–", "*", "·", "+")
+        edu_keywords = ("formação", "formacao", "education", "acadêm", "academic", "certifica",
+                        "certification", "idiomas", "language", "ensino", "graduação", "graduacao",
+                        "mba", "pós", "pos-grad", "universidade", "faculdade")
+
+        current: Optional[Dict[str, Any]] = None
+        edu_mode = False
+        edu_lines: List[str] = []
+
+        def flush_edu():
+            nonlocal edu_lines
+            if edu_lines:
+                blocks.append({"kind": "text", "lines": edu_lines})
+                edu_lines = []
+
+        for raw in text.split("\n"):
+            line = raw.strip().lstrip("#").strip()
+            if not line:
+                continue
+            if "Eduardo M." in line or "Terra" in line or "992" in line:
+                continue
+
+            # Bullet de conquista
+            if line.startswith(bullet_chars):
+                bullet = line.lstrip("".join(bullet_chars)).strip()
+                if not bullet:
+                    continue
+                if current is not None:
+                    current["bullets"].append(bullet)
+                else:
+                    if edu_mode:
+                        edu_lines.append(f"- {bullet}")
+                    else:
+                        blocks.append({"kind": "text", "lines": [f"- {bullet}"]})
+                continue
+
+            # Cabeçalho 'EMPRESA | CARGO'
+            m = entry_re.match(line)
+            company = role = period = ""
+            if m:
+                company = m.group("company").strip()
+                rest = m.group("rest").strip()
+                mp = period_re.match(rest)
+                if mp:
+                    period = mp.group("period").strip()
+                    role = mp.group("head").strip()
+                else:
+                    role = rest
+            else:
+                # Cabeçalho com período entre parênteses no fim da linha
+                mp = period_re.match(line)
+                if mp and re.search(r"(19|20)\d{2}", mp.group("period") or ""):
+                    period = mp.group("period").strip()
+                    head = mp.group("head").strip()
+                    if " - " in head or " – " in head:
+                        parts = re.split(r"\s+[-–]\s+", head, maxsplit=1)
+                        role, company = parts[0].strip(), parts[1].strip()
+                    else:
+                        company = head
+                else:
+                    role = ""
+
+            if company or role:
+                flush_edu()
+                current = {"kind": "entry", "company": company, "role": role, "period": period, "bullets": []}
+                blocks.append(current)
+                continue
+
+            # Linha de texto corrido (formação, certificações, observações)
+            low = line.lower()
+            if any(k in low for k in edu_keywords):
+                flush_edu()
+                edu_mode = True
+            if edu_mode:
+                edu_lines.append(line)
+            else:
+                blocks.append({"kind": "text", "lines": [line]})
+
+        flush_edu()
+        return blocks
+
     @classmethod
-    def generate_pdf(cls, data: Dict[str, any], output_path: str):
+    def generate_pdf(cls, data: Dict[str, any], output_path: str, template: str = None):
         """
-        Gera um PDF altamente polido e profissional com o CV customizado usando fpdf2.
+        Gera o PDF do currículo customizado usando fpdf2.
+
+        Templates disponíveis (via parâmetro ou variável de ambiente CV_TEMPLATE):
+        - 'harvard' (padrão): layout denso single-column, preto e branco, otimizado para ATS
+        - 'corporate': layout legado com faixa de cor no topo
         """
-        # Funcao auxiliar para sanitizar caracteres incompatíveis com a fonte padrão
-        def sanitize_text(text: str) -> str:
-            if not isinstance(text, str):
-                text = str(text)
-            return text.replace("–", "-").replace("—", "-").replace("“", '"').replace("”", '"').replace("’", "'").replace("‘", "'").replace("•", "-")
+        template = (template or os.getenv("CV_TEMPLATE", "harvard") or "harvard").strip().lower()
+        if template == "corporate":
+            cls._render_corporate_pdf(data, output_path)
+        else:
+            cls._render_harvard_pdf(data, output_path)
+        log.info(f"PDF customizado gerado com sucesso em: {output_path} (template={template})")
+
+    @classmethod
+    def _render_harvard_pdf(cls, data: Dict[str, Any], output_path: str):
+        """
+        Template Harvard / Corporate Executivo (F4.4):
+        - Single-column e preto e branco: nenhum retângulo colorido, tabela ou caixa de texto,
+          para que robôs ATS extraiam o conteúdo na ordem correta de leitura.
+        - Tipografia densa (9.3pt / leading 4.4mm) para conter a carreira completa em 1-2 páginas.
+        - Cabeçalho com nome centralizado, contato em linha única e título profissional.
+        - Seções com heading textual em caixa alta e régua fina.
+        - Experiências em blocos 'EMPRESA' (bold) + período alinhado à direita + cargo em itálico.
+        """
+        sanitize_text = cls._sanitize_pdf_text
+        PAGE_LEFT, PAGE_RIGHT = 13, 197  # 210 - margem direita
+
+        lang = str(data.get("detected_language", "en")).lower()
+        if lang == "en":
+            lbl_summary, lbl_skills = "PROFESSIONAL SUMMARY", "CORE SKILLS"
+            lbl_exp, lbl_edu = "PROFESSIONAL EXPERIENCE", "EDUCATION & CERTIFICATIONS"
+        else:
+            lbl_summary, lbl_skills = "RESUMO PROFISSIONAL", "COMPETÊNCIAS-CHAVE"
+            lbl_exp, lbl_edu = "EXPERIÊNCIA PROFISSIONAL", "FORMAÇÃO & CERTIFICAÇÕES"
+
+        class PDF(FPDF):
+            def footer(self):
+                if self.page_no() < 1:
+                    return
+                self.set_y(-12)
+                self.set_font("Helvetica", "", 7.5)
+                self.set_text_color(130)
+                self.cell(0, 5, f"{self.page_no()}", align="C")
+
+        pdf = PDF(format="A4")
+        pdf.set_margins(PAGE_LEFT, 11, PAGE_LEFT)
+        pdf.set_auto_page_break(auto=True, margin=16)
+        pdf.add_page()
+
+        # --- Cabeçalho (sem faixa de cor: leitura limpa por ATS) ---
+        pdf.set_font("Helvetica", "B", 17)
+        pdf.set_text_color(18, 18, 18)
+        pdf.cell(0, 8, sanitize_text("Eduardo M. Hermes da Fonseca"), align="C", new_x="LMARGIN", new_y="NEXT")
+        pdf.set_font("Helvetica", "", 8.8)
+        pdf.set_text_color(70)
+        pdf.cell(0, 4.5, sanitize_text("(+5511) 992 954 344 | fonseca.eduardo@terra.com.br | br.linkedin.com/in/eduardohermesdaf"),
+                 align="C", new_x="LMARGIN", new_y="NEXT")
+        title = sanitize_text(data.get("title", "")).strip()
+        if title:
+            pdf.ln(1.6)
+            pdf.set_font("Helvetica", "B", 11)
+            pdf.set_text_color(18, 18, 18)
+            pdf.cell(0, 5.2, title, align="C", new_x="LMARGIN", new_y="NEXT")
+        pdf.ln(2)
+
+        def rule():
+            pdf.set_draw_color(120, 120, 120)
+            pdf.set_line_width(0.3)
+            y = pdf.get_y()
+            pdf.line(PAGE_LEFT, y, PAGE_RIGHT, y)
+            pdf.ln(2.2)
+
+        def section(heading: str):
+            pdf.ln(1.6)
+            pdf.set_font("Helvetica", "B", 9.8)
+            pdf.set_text_color(18, 18, 18)
+            pdf.cell(0, 4.6, sanitize_text(heading.upper()), new_x="LMARGIN", new_y="NEXT")
+            rule()
+
+        def render_entry(entry: Dict[str, Any]):
+            company = sanitize_text(entry.get("company", "")).strip()
+            role = sanitize_text(entry.get("role", "")).strip()
+            period = sanitize_text(entry.get("period", "")).strip()
+
+            pdf.set_font("Helvetica", "B", 9.4)
+            pdf.set_text_color(18, 18, 18)
+            if period:
+                pdf.cell(135, 4.5, company, new_x="END")
+                pdf.set_font("Helvetica", "", 9.2)
+                pdf.set_text_color(55)
+                pdf.cell(0, 4.5, period, align="R", new_x="LMARGIN", new_y="NEXT")
+            else:
+                pdf.cell(0, 4.5, company, new_x="LMARGIN", new_y="NEXT")
+            if role:
+                pdf.set_font("Helvetica", "I", 9.2)
+                pdf.set_text_color(45)
+                pdf.cell(0, 4.3, role, new_x="LMARGIN", new_y="NEXT")
+            for bullet in entry.get("bullets", []):
+                pdf.set_font("Helvetica", "", 9.2)
+                pdf.set_text_color(30)
+                pdf.set_x(PAGE_LEFT + 2)
+                pdf.multi_cell(PAGE_RIGHT - PAGE_LEFT - 2, 4.3, sanitize_text(f"- {bullet}"),
+                               new_x="LMARGIN", new_y="NEXT")
+            pdf.set_x(PAGE_LEFT)
+            pdf.ln(0.9)
+
+        def render_text_block(lines: List[str]):
+            pdf.set_font("Helvetica", "", 9.2)
+            pdf.set_text_color(30)
+            for line in lines:
+                pdf.set_x(PAGE_LEFT)  # multi_cell default do fpdf2 termina com x na margem direita
+                pdf.multi_cell(PAGE_RIGHT - PAGE_LEFT, 4.3, sanitize_text(line),
+                               new_x="LMARGIN", new_y="NEXT")
+            pdf.ln(0.7)
+
+        rule()
+
+        # --- Resumo executivo ---
+        summary = sanitize_text(data.get("summary", "")).strip()
+        if summary:
+            section(lbl_summary)
+            pdf.set_font("Helvetica", "", 9.3)
+            pdf.set_text_color(30)
+            pdf.multi_cell(0, 4.4, summary)
+
+        # --- Competências (bloco único, separado por pipe: bom para extração) ---
+        skills = [s for s in (data.get("highlighted_skills") or []) if s]
+        if skills:
+            section(lbl_skills)
+            pdf.set_font("Helvetica", "", 9.2)
+            pdf.set_text_color(30)
+            pdf.multi_cell(0, 4.4, sanitize_text(" | ".join(str(s) for s in skills)))
+
+        # --- Experiência (alinhamento + histórico cronológico) ---
+        exp_blocks: List[Dict[str, Any]] = []
+        alignment = cls._format_experience_content(data.get("experience_highlights")).strip()
+        history = cls._format_experience_content(data.get("full_original_experience")).strip()
+        if alignment:
+            exp_blocks.append({"kind": "text", "lines": [l for l in alignment.split("\n") if l.strip()]})
+        exp_blocks.extend(cls._parse_experience_blocks(history))
+
+        entries = [b for b in exp_blocks if b["kind"] == "entry"]
+        if entries or any(b["kind"] == "text" for b in exp_blocks):
+            section(lbl_exp)
+            for block in exp_blocks:
+                if block["kind"] == "entry":
+                    render_entry(block)
+                else:
+                    render_text_block(block["lines"])
+
+        pdf.output(output_path)
+
+    @classmethod
+    def _render_corporate_pdf(cls, data: Dict[str, Any], output_path: str):
+        """Template legado ('corporate'): faixa azul no topo e seções em cor institucional."""
+        sanitize_text = cls._sanitize_pdf_text
 
         class PDF(FPDF):
             def header(self):
                 # Cabeçalho elegante
-                self.set_fill_color(15, 33, 253) # Ibope Blue (#0F21FD)
+                self.set_fill_color(15, 33, 253)  # Ibope Blue (#0F21FD)
                 self.rect(0, 0, 210, 15, "F")
                 self.ln(10)
-                
+
             def footer(self):
                 self.set_y(-15)
                 self.set_font("Helvetica", "I", 8)
@@ -422,30 +722,30 @@ class AIBrain:
         pdf = PDF()
         pdf.add_page()
         pdf.set_auto_page_break(auto=True, margin=15)
-        
+
         # Nome
         pdf.set_font("Helvetica", "B", 20)
         pdf.set_text_color(15, 33, 253)
         pdf.cell(0, 10, sanitize_text("Eduardo M. Hermes da Fonseca"), new_x="LMARGIN", new_y="NEXT", align="L")
-        
+
         # Informações de Contato
         pdf.set_font("Helvetica", "", 10)
         pdf.set_text_color(80)
         pdf.cell(0, 5, sanitize_text("Casado - Brasileiro | (+5511) 992 954 344 | fonseca.eduardo@terra.com.br"), new_x="LMARGIN", new_y="NEXT", align="L")
         pdf.cell(0, 5, sanitize_text("LinkedIn: https://br.linkedin.com/in/eduardohermesdaf"), new_x="LMARGIN", new_y="NEXT", align="L")
         pdf.ln(5)
-        
+
         # Título Profissional Customizado
         pdf.set_font("Helvetica", "B", 14)
         pdf.set_text_color(50)
         pdf.multi_cell(0, 6, sanitize_text(data.get("title", "Product Specialist")), new_x="LMARGIN", new_y="NEXT", align="L")
         pdf.ln(3)
-        
+
         # Linha separadora
         pdf.set_draw_color(200)
         pdf.line(10, pdf.get_y(), 200, pdf.get_y())
         pdf.ln(5)
-        
+
         lang = data.get("detected_language", "en").lower()
         if lang == "en":
             lbl_summary = "PROFESSIONAL SUMMARY"
@@ -458,46 +758,6 @@ class AIBrain:
             lbl_align = "ALINHAMENTO DE EXPERIÊNCIA"
             lbl_exp = "HISTÓRICO PROFISSIONAL E FORMAÇÃO"
 
-        def format_experience_content(val) -> str:
-            if not val:
-                return ""
-            if isinstance(val, str):
-                return val
-            if isinstance(val, list):
-                out_lines = []
-                for item in val:
-                    if isinstance(item, str):
-                        out_lines.append(item)
-                    elif isinstance(item, dict):
-                        comp = item.get("company") or item.get("empresa") or ""
-                        role = item.get("role") or item.get("position") or item.get("cargo") or item.get("title") or ""
-                        period = item.get("period") or item.get("date") or item.get("periodo") or item.get("duration") or ""
-                        
-                        header_parts = []
-                        if role and comp:
-                            header_parts.append(f"{comp} | {role}")
-                        elif comp or role:
-                            header_parts.append(comp or role)
-                        if period:
-                            header_parts.append(f"({period})")
-                        
-                        if header_parts:
-                            out_lines.append(" ".join(header_parts))
-                        
-                        bullets = item.get("bullets") or item.get("responsibilities") or item.get("description") or item.get("descricao") or []
-                        if isinstance(bullets, list):
-                            for b in bullets:
-                                out_lines.append(f"• {b}")
-                        elif isinstance(bullets, str):
-                            out_lines.append(f"• {bullets}")
-                        out_lines.append("") # linha em branco para separar
-                    else:
-                        out_lines.append(str(item))
-                return "\n".join(out_lines)
-            if isinstance(val, dict):
-                return format_experience_content([val])
-            return str(val)
-
         # Seção: Resumo Profissional
         pdf.set_font("Helvetica", "B", 12)
         pdf.set_text_color(15, 33, 253)
@@ -507,7 +767,7 @@ class AIBrain:
         pdf.set_text_color(50)
         pdf.multi_cell(0, 5, sanitize_text(data.get("summary", "")))
         pdf.ln(5)
-        
+
         # Seção: Habilidades em Destaque
         pdf.set_font("Helvetica", "B", 12)
         pdf.set_text_color(15, 33, 253)
@@ -518,9 +778,9 @@ class AIBrain:
         skills_str = ", ".join(data.get("highlighted_skills", []))
         pdf.multi_cell(0, 5, sanitize_text(skills_str))
         pdf.ln(5)
-        
+
         # Seção: Destaques de Experiência Adequada
-        exp_highlights_text = format_experience_content(data.get("experience_highlights"))
+        exp_highlights_text = cls._format_experience_content(data.get("experience_highlights"))
         if exp_highlights_text.strip():
             pdf.set_font("Helvetica", "B", 12)
             pdf.set_text_color(15, 33, 253)
@@ -530,7 +790,7 @@ class AIBrain:
             pdf.set_text_color(50)
             pdf.multi_cell(0, 5, sanitize_text(exp_highlights_text))
             pdf.ln(5)
-            
+
         # Seção: Histórico Profissional
         pdf.set_font("Helvetica", "B", 12)
         pdf.set_text_color(15, 33, 253)
@@ -538,15 +798,14 @@ class AIBrain:
         pdf.ln(2)
         pdf.set_font("Helvetica", "", 10)
         pdf.set_text_color(50)
-        
-        original_exp = format_experience_content(data.get("full_original_experience"))
+
+        original_exp = cls._format_experience_content(data.get("full_original_experience"))
         lines = original_exp.split("\n")
         cleaned_lines = [sanitize_text(l) for l in lines if "Eduardo M." not in l and "Terra" not in l and "992" not in l]
         pdf.multi_cell(0, 5, "\n".join(cleaned_lines))
-        
+
         # Salva o arquivo final
         pdf.output(output_path)
-        log.info(f"PDF customizado gerado com sucesso em: {output_path}")
 
     @classmethod
     def answer_question(cls, question: str, job_title: str, job_description: str, cv_text: str, salary_target: str = "60,000") -> str:

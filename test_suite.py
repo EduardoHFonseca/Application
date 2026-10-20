@@ -1,8 +1,12 @@
 import os
+import tempfile
 import unittest
 from unittest.mock import patch, MagicMock
 from ai_brain import AIBrain
 from telegram_bot import TelegramHumanFeedback
+
+# Raiz do projeto (mesmo diretório deste arquivo) — portável entre máquinas
+APP_ROOT = os.path.dirname(os.path.abspath(__file__))
 
 class TestAIBrain(unittest.TestCase):
     def setUp(self):
@@ -53,18 +57,68 @@ class TestAIBrain(unittest.TestCase):
             "experience_highlights": "Destaques das experiências anteriores em liderança.",
             "full_original_experience": "Eduardo M. Hermes da Fonseca\n2020-2024: Product Manager na Empresa Exemplo."
         }
-        output_path = "/home/efonseca/workspace/Application/test_custom_cv.pdf"
-        
-        if os.path.exists(output_path):
-            os.remove(output_path)
-            
-        AIBrain.generate_pdf(data, output_path)
-        self.assertTrue(os.path.exists(output_path))
-        self.assertGreater(os.path.getsize(output_path), 0)
-        
-        # Limpa arquivo temporário de teste
-        if os.path.exists(output_path):
-            os.remove(output_path)
+        with tempfile.TemporaryDirectory() as tmp:
+            output_path = os.path.join(tmp, "test_custom_cv.pdf")
+            AIBrain.generate_pdf(data, output_path, template="corporate")
+            self.assertTrue(os.path.exists(output_path))
+            self.assertGreater(os.path.getsize(output_path), 0)
+
+    def test_generate_pdf_harvard(self):
+        data = {
+            "detected_language": "pt",
+            "title": "Gerente de TI",
+            "summary": "Executivo com 25 anos em liderança de tecnologia, produtos digitais e ambientes regulados.",
+            "highlighted_skills": ["Gestão de TI", "Product Management", "Cloud", "Agilidade"],
+            "experience_highlights": "Reduzi o custo de infraestrutura em 30% migrando para cloud.",
+            "full_original_experience": (
+                "IBOPE Media | IT & Product Manager (2024 - Atual)\n"
+                "- Liderança do time de dados e plataforma de audiência\n"
+                "- Governança de cloud e segurança da informação\n\n"
+                "NAVA Technology for Business | Product Owner (2020 - 2022)\n"
+                "- Product roadmap para clientes enterprise\n"
+                "- Times ágeis (Scrum/Kanban)\n\n"
+                "Formação & Certificações\n"
+                "MBA em Gestão de TI\n"
+                "Bacharel em Ciência da Computação"
+            ),
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            output_path = os.path.join(tmp, "test_harvard_cv.pdf")
+            AIBrain.generate_pdf(data, output_path, template="harvard")
+            self.assertTrue(os.path.exists(output_path))
+            self.assertGreater(os.path.getsize(output_path), 0)
+
+            from pypdf import PdfReader
+            reader = PdfReader(output_path)
+            self.assertGreaterEqual(len(reader.pages), 1)
+            text = "\n".join(p.extract_text() or "" for p in reader.pages)
+            self.assertIn("IBOPE Media", text)
+            self.assertIn("2024 - Atual", text)
+            self.assertIn("Gestão de TI", text)
+            # ATS: nada de cor no layout (retângulos coloridos viram lixo estruturado)
+            self.assertNotIn("Ibope Blue", text)
+
+    def test_parse_experience_blocks(self):
+        blocks = AIBrain._parse_experience_blocks(
+            "Empresa X | Cargo Y (2020 - 2022)\n- conquista 1\n- conquista 2\nFormação\nBacharelado"
+        )
+        entries = [b for b in blocks if b["kind"] == "entry"]
+        texts = [b for b in blocks if b["kind"] == "text"]
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0]["company"], "Empresa X")
+        self.assertEqual(entries[0]["role"], "Cargo Y")
+        self.assertEqual(entries[0]["period"], "2020 - 2022")
+        self.assertEqual(entries[0]["bullets"], ["conquista 1", "conquista 2"])
+        self.assertTrue(any("Bacharelado" in " ".join(t["lines"]) for t in texts))
+
+    def test_cv_template_env_default(self):
+        os.environ["CV_TEMPLATE"] = "harvard"
+        data = {"title": "PM", "summary": "s", "highlighted_skills": ["a"],
+                "full_original_experience": "Empresa | Cargo (2020 - 2021)\n- item"}
+        with tempfile.TemporaryDirectory() as tmp:
+            output_path = os.path.join(tmp, "env_template.pdf")
+            AIBrain.generate_pdf(data, output_path)  # sem template explícito: lê CV_TEMPLATE
+            self.assertTrue(os.path.exists(output_path))
 
     @patch("ai_brain.AIBrain.call_llm")
     def test_answer_question(self, mock_call_llm):
@@ -117,7 +171,7 @@ class TestEmailService(unittest.TestCase):
         mock_post.return_value = mock_response
 
         # Cria um PDF temporário para anexo no teste
-        temp_pdf = "/home/efonseca/workspace/Application/temp_test_attachment.pdf"
+        temp_pdf = os.path.join(tempfile.gettempdir(), "temp_test_attachment.pdf")
         with open(temp_pdf, "w") as f:
             f.write("Fake PDF Content")
 
@@ -218,7 +272,7 @@ import py_compile
 
 class TestPhase3StreamlitApp(unittest.TestCase):
     def test_app_py_syntax(self):
-        app_path = "/home/efonseca/workspace/Application/app.py"
+        app_path = os.path.join(APP_ROOT, "app.py")
         self.assertTrue(os.path.exists(app_path))
         # Compila o arquivo app.py para garantir zero erros de sintaxe
         compiled = py_compile.compile(app_path, doraise=True)
