@@ -21,6 +21,7 @@ log = logging.getLogger(__name__)
 class AIBrain:
     @staticmethod
     def get_config() -> Dict[str, str]:
+        """Configuração do Azure OpenAI (fallback opcional)."""
         return {
             "key": os.getenv("AZURE_OPENAI_KEY", ""),
             "endpoint": os.getenv("AZURE_OPENAI_ENDPOINT", "").rstrip("/"),
@@ -28,26 +29,95 @@ class AIBrain:
             "api_version": os.getenv("AZURE_OPENAI_API_VERSION", "2024-02-15-preview")
         }
 
+    @staticmethod
+    def get_llm_router_config() -> Dict[str, str]:
+        """
+        Configuração do roteador local de LLMs livres (FreeLLM-router / freellmapi).
+        É a via preferencial quando LLM_BASE_URL e LLM_API_KEY estão definidos.
+        """
+        return {
+            "base_url": os.getenv("LLM_BASE_URL", "").rstrip("/"),
+            "key": os.getenv("LLM_API_KEY", ""),
+            "model": os.getenv("LLM_MODEL", "auto")
+        }
+
+    @staticmethod
+    def _ensure_json_keyword(messages: List[Dict[str, str]]) -> List[Dict[str, str]]:
+        """
+        Garante que a conversa contenha a palavra 'json' quando response_format=json_object.
+
+        A API OpenAI (e vários providers compatíveis, ex: Groq) rejeitam o pedido com
+        400 caso a palavra não apareça em nenhuma mensagem. O Azure tolerava, por isso
+        os prompts antigos não a incluíam. Injeta de forma idempotente.
+        """
+        if any("json" in (m.get("content") or "").lower() for m in messages):
+            return messages
+
+        msgs = [dict(m) for m in messages]
+        for i, m in enumerate(msgs):
+            if m.get("role") == "system":
+                msgs[i]["content"] = (m.get("content") or "") + "\n\nResponda exclusivamente com um objeto JSON válido."
+                return msgs
+        return [{"role": "system", "content": "Responda exclusivamente com um objeto JSON válido."}] + msgs
+
     @classmethod
     def call_llm(cls, messages: List[Dict[str, str]], response_format: str = "text") -> str:
+        """
+        Envia a conversa ao LLM e devolve o texto da resposta.
+
+        Ordem de preferência:
+        1. Roteador local OpenAI-compatível (LLM_BASE_URL/LLM_API_KEY/LLM_MODEL);
+        2. Azure OpenAI (AZURE_OPENAI_KEY), mantido como fallback opcional.
+        """
+        if response_format == "json":
+            messages = cls._ensure_json_keyword(messages)
+        router = cls.get_llm_router_config()
+        if router["base_url"] and router["key"]:
+            return cls._call_llm_router(messages, response_format, router)
+        return cls._call_llm_azure(messages, response_format)
+
+    @classmethod
+    def _call_llm_router(cls, messages: List[Dict[str, str]], response_format: str, router: Dict[str, str]) -> str:
+        url = f"{router['base_url']}/chat/completions"
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {router['key']}"
+        }
+        payload = {
+            "model": router["model"] or "auto",
+            "messages": messages,
+            "temperature": 0.1
+        }
+        if response_format == "json":
+            if not any("json" in (m.get("content") or "").lower() for m in messages):
+                messages = cls._ensure_json_keyword(messages)
+                payload["messages"] = messages
+            payload["response_format"] = {"type": "json_object"}
+
+        response = requests.post(url, json=payload, headers=headers, timeout=180)
+        response.raise_for_status()
+        return response.json()["choices"][0]["message"]["content"].strip()
+
+    @classmethod
+    def _call_llm_azure(cls, messages: List[Dict[str, str]], response_format: str = "text") -> str:
         cfg = cls.get_config()
         if not cfg["key"]:
-            raise ValueError("AZURE_OPENAI_KEY não configurada no .env")
-        
+            raise ValueError("Nenhum LLM configurado: defina LLM_BASE_URL/LLM_API_KEY (roteador local) ou AZURE_OPENAI_KEY no .env")
+
         url = f"{cfg['endpoint']}/openai/deployments/{cfg['chat_deployment']}/chat/completions?api-version={cfg['api_version']}"
-        
+
         headers = {
             "Content-Type": "application/json",
             "api-key": cfg["key"]
         }
-        
+
         payload = {
             "messages": messages,
             "temperature": 0.1
         }
         if response_format == "json":
             payload["response_format"] = {"type": "json_object"}
-            
+
         response = requests.post(url, json=payload, headers=headers, timeout=60)
         response.raise_for_status()
         return response.json()["choices"][0]["message"]["content"].strip()

@@ -3,7 +3,7 @@ import json
 import logging
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
 
 from ai_brain import AIBrain
 import database
@@ -13,16 +13,18 @@ log = logging.getLogger(__name__)
 
 def seed_curacao(force_reseed=True):
     log.info("Iniciando processo de ingestão e auto-clustering completo dos CVs...")
-    
-    conn = database.get_connection()
-    cursor = conn.cursor()
+
+    # TRUNCATE exige privilégio de owner; o usuário de serviço (svc_application)
+    # tem apenas SELECT/INSERT/UPDATE/DELETE. Usa DELETE, que é equivalente aqui
+    # (as tabelas não têm FKs de entrada) e respeita o contrato do schema.sql.
     if force_reseed:
-        cursor.execute("TRUNCATE TABLE curacao_experiencias RESTART IDENTITY;")
-        cursor.execute("TRUNCATE TABLE curacao_qualificacoes RESTART IDENTITY;")
-        cursor.execute("TRUNCATE TABLE curacao_formacao RESTART IDENTITY;")
+        conn = database.get_connection()
+        cursor = conn.cursor()
+        for tabela in ("curacao_experiencias", "curacao_qualificacoes", "curacao_formacao"):
+            cursor.execute(f"DELETE FROM {tabela};")
         conn.commit()
-    cursor.close()
-    conn.close()
+        cursor.close()
+        conn.close()
 
     cvs = AIBrain.get_base_cvs()
     if not cvs:
