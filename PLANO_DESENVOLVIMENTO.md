@@ -104,8 +104,10 @@ Para permitir a orquestração robusta sob demanda pelo OpenClaw e a flexibilida
 - [ ] **[F4.3] Sessão de Entrevista Executiva por Janela:**
   - Janela 1 (IBOPE Media 2024-Atual): Concluída e refinada.
   - Janelas 2 a 14 (Freelance a RHT System): Pendentes para a próxima sessão de entrevista guiada.
-- [ ] **[F4.4] Camada 3 - Template PDF Padrão Harvard/Corporate Executivo:**
-  - Layout denso e otimizado para robôs de recrutamento (ATS).
+- [x] **[F4.4] Camada 3 - Template PDF Padrão Harvard/Corporate Executivo:**
+  - Novo template `harvard` (padrão via `CV_TEMPLATE` no `.env` ou parâmetro explícito em `AIBrain.generate_pdf`): single-column preto e branco, sem faixas/retângulos coloridos, tipografia densa (9.2pt), seções com *heading* textual e régua fina, empresa em negrito com período alinhado à direita, cargo em itálico e formação/certificações ao final — leitura em ordem correta por robôs ATS.
+  - Parser estruturado (`_parse_experience_blocks`) que converte o histórico `EMPRESA | CARGO (DATA)` do LLM em blocos de experiência e de formação.
+  - Template legado `corporate` preservado com comportamento idêntico ao anterior; selecionável na aba ⚙️ Filtros & Configurações do painel.
 
 ### [Fase 5] Suporte a Vagas Internas / Mensagens Diretas & Auto-Detecção de Idioma (26/07/2026)
 - [x] **[F5.1] Modo Descritivo Direto em Tab 2 (`app.py`):**
