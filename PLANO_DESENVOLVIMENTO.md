@@ -33,6 +33,14 @@ Para permitir a orquestração robusta sob demanda pelo OpenClaw e a flexibilida
 └──────────────┘
 ```
 
+### 1.0 Dependência Externa: Roteador de LLMs (`FreeLLM-router`)
+
+O **Application** não chama provedores de LLM diretamente. Ele consome um gateway local — o projeto **`FreeLLM-router`** (`/root/workspace/FreeLLM-router`), um clone MIT do *freellmapi* que roda em Docker (`http://127.0.0.1:3001/v1`).
+
+- **Contrato no `.env`:** `LLM_BASE_URL`, `LLM_API_KEY` (chave unificada) e `LLM_MODEL`.
+- **Azure OpenAI** permanece suportado apenas como *fallback* opcional, quando `LLM_BASE_URL`/`LLM_API_KEY` não estão definidos.
+- O roteador é **infraestrutura compartilhada e independente**: pode servir outros projetos, não pertence ao backlog do Application e é versionado em repositório próprio.
+
 ### 1.1 Fluxo Bidirecional (*Human-in-the-Loop*)
 1. O **Motor de Navegação (Playwright)** acessa a vaga no LinkedIn, inicia o processo de "Easy Apply" e se depara com uma pergunta não mapeada pelo cérebro IA.
 2. O **Motor** faz uma consulta ao Telegram Bot direto enviando a pergunta formatada em Markdown.
@@ -98,12 +106,14 @@ Para permitir a orquestração robusta sob demanda pelo OpenClaw e a flexibilida
 ### [Fase 4] Reformulação do Gerador de CVs (Arquitetura Fact-Based)
 - [x] **[F4.1] Camada 1 - Base Mestra Fact-Based no PostgreSQL:**
   - Criadas tabelas `curacao_qualificacoes`, `curacao_experiencias` e `curacao_formacao` no `application_db`.
-  - Implementado `seed_curacao.py` para auto-clustering sem truncamento de texto, populando 14 Janelas Cronológicas ordenadas do presente até 1997 (incluindo IBOPE, FlexVision 2014-2016, ADM 2001-2007 com SPB/BACEN/SOX, etc.).
+  - `seed_curacao.py`: usa um **único CV mestre** (`CV-EHF-PORT-23.doc`) em vez de concatenar todos os currículos (a concatenação ultrapassava a janela prática dos tiers gratuitos de LLM); normaliza o schema de resposta (os nomes de campo variam entre provedores) para experiências/formação; normaliza período/descrição em `periodo_inicio`/`periodo_fim`/`bullets_acervo`; e persiste qualificações, experiências e formação de forma incremental.
+  - **Estado atual do banco:** 16 janelas cronológicas ordenadas (1992 → Atual), cobrindo Multiplus (1992-1994), Dual CAD (1994-1997), RHT System (1997-2001), InfoSERVER (2001), ADM do Brasil (2001-2007, com SPB/BACEN/SOX), New Age (2008-2009), Grupo Belfort (2009), TCS (2009-2010), Lo-Jack/Tracker (2010-2012), Microsoft (2012-2014), NAVA (2014-2015), InfoSERVER (2016-2017), Freelance (2017), Nova Agri/Toyota Tsusho (2018-2020), NAVA (2020-2022) e Freelance (2022-Atual); mais 6 formações/certificações.
 - [x] **[F4.2] Painel de Curação no Streamlit & Copiloto IA (`app.py`):**
   - Implementada a aba "🧩 Curação da Base Mestra" com layout em 2 colunas e Copiloto de IA para detecção de siglas (LLM, VLM, RAG, PoC, SPB), sugestão de tags de domínio e botão de injeção direta no dicionário do bloco em 1 clique.
 - [ ] **[F4.3] Sessão de Entrevista Executiva por Janela:**
   - Janela 1 (IBOPE Media 2024-Atual): Concluída e refinada.
-  - Janelas 2 a 14 (Freelance a RHT System): Pendentes para a próxima sessão de entrevista guiada.
+  - **Escopo revisado:** a extração automática (`seed_curacao.py`) já populou as 16 janelas com `contexto_escopo`, `bullets_acervo`, `siglas_projetos` e `tags_dominio` a partir do CV mestre, porém de forma automatizada e possivelmente rasa. O objetivo do F4.3 passa a ser **enriquecer manualmente, janela por janela**, os dados que o LLM não consegue inferir (tamanho real de equipe, faturamento, métricas de impacto, significado de siglas), usando o **Copiloto IA** da aba "🧩 Curação da Base Mestra" para sugerir tags/siglas e injetar em 1 clique.
+  - Pendentes: enriquecimento guiado das janelas 2 a 16.
 - [x] **[F4.4] Camada 3 - Template PDF Padrão Harvard/Corporate Executivo:**
   - Novo template `harvard` (padrão via `CV_TEMPLATE` no `.env` ou parâmetro explícito em `AIBrain.generate_pdf`): single-column preto e branco, sem faixas/retângulos coloridos, tipografia densa (9.2pt), seções com *heading* textual e régua fina, empresa em negrito com período alinhado à direita, cargo em itálico e formação/certificações ao final — leitura em ordem correta por robôs ATS.
   - Parser estruturado (`_parse_experience_blocks`) que converte o histórico `EMPRESA | CARGO (DATA)` do LLM em blocos de experiência e de formação.
@@ -130,6 +140,8 @@ Para garantir 100% de estabilidade e imunidade contra erros gráficos (como `Key
 
 ---
 
-## 4. Próximos Passos Imediatos
-1. Inserir os dados de API e credenciais do Telegram e do LinkedIn no arquivo local `.env` (Já preenchido pelo usuário).
-2. Delegar ao OpenClaw a execução do motor via comando simples: `python playwright_bot.py`.
+## 5. Próximos Passos Imediatos
+1. **[F4.3]** Enriquecer as janelas 2 a 16 da Base Mestra via sessão de entrevista guiada + Copiloto IA (único item de backlog em aberto).
+2. Preencher as credenciais ausentes no `.env` local: `AZURE_OPENAI_KEY`/`AZURE_OPENAI_ENDPOINT` (opcional, só se abandonar o roteador), `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID` e `LINKEDIN_USERNAME`/`LINKEDIN_PASSWORD` — necessários para HITL e disparo real de candidaturas.
+3. Garantir que o roteador de LLMs (`FreeLLM-router`) esteja de pé antes de rodar o motor: `docker compose up -d` em `/root/workspace/FreeLLM-router`.
+4. Delegar ao OpenClaw a execução do motor via comando simples: `python playwright_bot.py`.
