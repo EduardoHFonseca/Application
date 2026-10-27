@@ -129,6 +129,22 @@ O **Application** não chama provedores de LLM diretamente. Ele consome um gatew
 - [x] **[F5.3] Parser Defensivo de Destaques de Experiência:**
   - Implementado `format_experience_content` para converter listas/dicionários JSON do LLM em marcadores (*bullets*) limpos sem exibições de sintaxe de código no PDF.
 
+### [Fase 6] Crawler Multi-Fonte (27/10/2026)
+- [x] **[F6.1] Curadoria da lista `Application.txt`:**
+  - 25 entradas avaliadas com teste HTTP real; itens mortos, pagos, duplicados e fora de escopo descartados com justificativa.
+  - Catálogo versionado em `config/sources.yaml` com `apply_mode` (`auto` | `assisted` | `link_only`), intervalo mínimo por fonte e notas de ToS.
+- [x] **[F6.2] Framework de fontes + 3 fontes API/RSS:**
+  - `sources/base.py` com `JobPosting` normalizado, URL canônica, hash de dedupe e filtros de cargo/localização; `sources/registry.py` como catálogo.
+  - Adaptadores `remotive.py` (API), `rss.py` (We Work Remotely) e `workingnomads.py` (endpoint JSON público).
+  - `crawler.py`: descoberta → normalização → filtro → dedupe → persistência → CV opcional → resumo no Telegram.
+  - CLI `--source/--all/--dry-run/--with-cv/--list-sources`; `playwright_bot.py` delega fontes não-LinkedIn.
+  - Migração `migrations/001_add_source_columns.sql` (`fonte`, `source_job_id`, `apply_mode`, `hash_dedupe`) com backfill dos registros existentes.
+  - Aba "🌐 Fontes & Crawler" no painel e filtro por fonte no histórico.
+  - `test_sources.py`: 19 casos com fixtures locais, sem chamadas de rede.
+- [ ] **[F6.3] Boards HTML (Fase 2):** Jobspresso, JustRemote, DailyRemote, Pangian e ARC em modo assistido.
+- [ ] **[F6.4] Wellfound e marketplaces (Fase 3):** sessão manual para Wellfound; link + rascunho de proposta via IA para Upwork/Fiverr/Freelancer/ServiceScape.
+- [ ] **[F6.5] Boards brasileiros (Fase 4):** Gupy, Vagas.com.br e Programathor.
+
 ---
 
 ## 4. Instruções de Execução em Servidor/VM Headless (SSH)
@@ -141,7 +157,10 @@ Para garantir 100% de estabilidade e imunidade contra erros gráficos (como `Key
 ---
 
 ## 5. Próximos Passos Imediatos
-1. **[F4.3]** Enriquecer as janelas 2 a 16 da Base Mestra via sessão de entrevista guiada + Copiloto IA (único item de backlog em aberto).
-2. Preencher as credenciais ausentes no `.env` local: `AZURE_OPENAI_KEY`/`AZURE_OPENAI_ENDPOINT` (opcional, só se abandonar o roteador), `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID` e `LINKEDIN_USERNAME`/`LINKEDIN_PASSWORD` — necessários para HITL e disparo real de candidaturas.
-3. Garantir que o roteador de LLMs (`FreeLLM-router`) esteja de pé antes de rodar o motor: `docker compose up -d` em `/root/workspace/FreeLLM-router`.
-4. Delegar ao OpenClaw a execução do motor via comando simples: `python playwright_bot.py`.
+1. **[F6.3]** Implementar os parsers HTML dos boards remotos (Jobspresso, JustRemote, DailyRemote, Pangian, ARC).
+2. **[F6.4]** Wellfound com sessão manual e marketplaces em modo link-only com rascunho de proposta.
+3. **[F6.5]** Boards brasileiros (Gupy, Vagas.com.br, Programathor).
+4. **[F4.3]** Enriquecer as janelas 2 a 16 da Base Mestra via sessão de entrevista guiada + Copiloto IA.
+5. Preencher as credenciais ausentes no `.env` local: `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID` e `LINKEDIN_USERNAME`/`LINKEDIN_PASSWORD` — necessários para HITL e disparo real de candidaturas.
+6. Garantir que o roteador de LLMs (`FreeLLM-router`) esteja de pé antes de rodar o motor: `docker compose up -d` em `/root/workspace/FreeLLM-router`.
+7. Delegar ao OpenClaw a execução do motor via comando simples: `python crawler.py --all` ou `python playwright_bot.py`.

@@ -42,6 +42,37 @@ psql -U dbadmin -d application_db -f schema.sql
 
 O login inicial no LinkedIn cria o `state.json` na raiz (gitignored); execuções seguintes reutilizam a sessão.
 
+## Crawler multi-fonte
+
+Além do LinkedIn, o crawler descobre vagas em **Remotive**, **We Work Remotely** e **Working Nomads** (APIs/RSS públicas). O catálogo de fontes fica em [`config/sources.yaml`](config/sources.yaml), incluindo a curadoria de `Application.txt` e o motivo de cada item descartado.
+
+```bash
+# Listar fontes, status e modo de candidatura
+.venv/bin/python crawler.py --list-sources
+
+# Simular coleta (não grava nada no banco)
+.venv/bin/python crawler.py --source remotive --source wwr --source workingnomads --dry-run
+
+# Coletar e gravar (respeita o intervalo mínimo por fonte)
+.venv/bin/python crawler.py --all
+
+# Coletar e já gerar CV personalizado para as vagas novas
+.venv/bin/python crawler.py --all --with-cv
+
+# O CLI do motor LinkedIn também delega para o crawler
+.venv/bin/python playwright_bot.py --source remotive
+```
+
+Modos de candidatura: `auto` (somente LinkedIn), `assisted` (descoberta + CV + aviso) e `link_only` (marketplaces, envio manual). O crawler respeita `robots.txt`, intervalos por fonte e não tenta burlar CAPTCHA/Cloudflare.
+
+### Migração do banco (multi-fonte)
+
+```bash
+psql -U dbadmin -d application_db -f migrations/001_add_source_columns.sql
+```
+
+Adiciona `fonte`, `source_job_id`, `apply_mode` e `hash_dedupe` à tabela `vagas`, com índice único `(fonte, source_job_id)`.
+
 ## Configuração
 
 | Chave | Descrição |
@@ -51,15 +82,22 @@ O login inicial no LinkedIn cria o `state.json` na raiz (gitignored); execuçõe
 | `AZURE_OPENAI_*` | Cérebro IA |
 | `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | Human-in-the-Loop |
 | `LINKEDIN_*` | Credenciais e preferências do crawler |
+| `CRAWLER_SOURCES` | Fontes habilitadas (ex.: `remotive,wwr,workingnomads`) |
+| `SEARCH_KEYWORDS` / `SEARCH_LOCATIONS` | Filtros padrão do crawler multi-fonte |
+| `CRAWLER_LIMIT_PER_SOURCE` | Limite de vagas por fonte (padrão 50) |
 
 Também é possível editar tudo pela aba **⚙️ Filtros & Configurações** do painel, que grava o `.env`.
 
 ## Estrutura
 
 ```
-app.py            Painel Streamlit (histórico, sob demanda, curação, acervo)
+app.py            Painel Streamlit (histórico, sob demanda, curação, acervo, fontes)
 ai_brain.py       Cérebro IA: análise de vaga, síntese de CV e geração de PDF
-playwright_bot.py Motor de candidatura (Playwright headless)
+playwright_bot.py Motor de candidatura LinkedIn (Playwright headless)
+crawler.py        Orquestrador multi-fonte (descoberta → dedupe → CV → aviso)
+sources/          Adaptadores por site (Remotive, WWR, Working Nomads, LinkedIn)
+config/           Catálogo de fontes e curadoria (sources.yaml)
+migrations/       DDL incremental aplicado pelo dbadmin
 database.py       Persistência PostgreSQL
 schema.sql        DDL do banco (aplicar como dbadmin)
 telegram_bot.py   Canal humano via Telegram

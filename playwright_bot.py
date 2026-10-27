@@ -4,7 +4,7 @@ import json
 import logging
 import random
 import re
-import os
+import sys
 import argparse
 from typing import Tuple, Dict, Any, List
 from dotenv import load_dotenv
@@ -557,7 +557,19 @@ if __name__ == "__main__":
     parser.add_argument("-u", "--url", type=str, help="URL ou ID de vaga específica para candidatura sob demanda")
     parser.add_argument("-l", "--loop", action="store_true", help="Executa o crawler em loop contínuo com agendador")
     parser.add_argument("-i", "--interval", type=float, help="Intervalo do loop em horas (padrão: 4h)")
+    parser.add_argument("-s", "--source", action="append", default=[], help="Fonte do crawler multi-site (repetível)")
+    parser.add_argument("--all", action="store_true", help="Executa o crawler multi-site em todas as fontes habilitadas")
     args = parser.parse_args()
+
+    if args.all or any(source.lower() != "linkedin" for source in args.source):
+        import crawler
+
+        crawler_argv = []
+        if args.all:
+            crawler_argv.append("--all")
+        for source in args.source:
+            crawler_argv.extend(["--source", source])
+        sys.exit(crawler.main(crawler_argv))
 
     bot = PlaywrightEasyApplyBot()
     bot.start(target_url=args.url, loop_mode=args.loop, interval_hours=args.interval)

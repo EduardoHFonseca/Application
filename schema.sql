@@ -7,17 +7,27 @@ SET search_path TO application, public;
 
 CREATE TABLE IF NOT EXISTS vagas (
     id SERIAL PRIMARY KEY,
-    linkedin_job_id VARCHAR(100) UNIQUE NOT NULL,
+    fonte VARCHAR(50) NOT NULL DEFAULT 'linkedin',
+    source_job_id VARCHAR(255),
+    linkedin_job_id VARCHAR(100) UNIQUE,
     url TEXT NOT NULL,
     titulo TEXT,
     empresa TEXT,
     localizacao TEXT,
     descricao TEXT,
     status VARCHAR(50) NOT NULL DEFAULT 'iniciado',
+    apply_mode VARCHAR(20) NOT NULL DEFAULT 'assisted',
+    hash_dedupe CHAR(64),
     pdf_custom_path TEXT,
     criado_em TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     atualizado_em TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_vagas_fonte_source
+    ON vagas (fonte, source_job_id);
+
+CREATE INDEX IF NOT EXISTS idx_vagas_hash_dedupe ON vagas (hash_dedupe);
+CREATE INDEX IF NOT EXISTS idx_vagas_fonte ON vagas (fonte);
 
 CREATE TABLE IF NOT EXISTS perguntas_respostas (
     id SERIAL PRIMARY KEY,

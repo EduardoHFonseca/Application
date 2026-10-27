@@ -1,0 +1,39 @@
+{
+  "0-legal-notice": "fixture",
+  "job-count": 3,
+  "jobs": [
+    {
+      "id": 2091161,
+      "url": "https://remotive.com/remote-jobs/product/senior-product-manager-20911",
+      "title": "Senior Product Manager",
+      "company_name": "Acme Remote",
+      "category": "Product",
+      "tags": ["product", "saas", "agile"],
+      "job_type": "full_time",
+      "publication_date": "2026-10-22T18:40:19",
+      "candidate_required_location": "Worldwide",
+      "salary": "90K-120K",
+      "description": "<p>We are hiring a <strong>Senior Product Manager</strong>.</p><ul><li>Remote friendly</li></ul>"
+    },
+    {
+      "id": 2091162,
+      "url": "https://remotive.com/remote-jobs/design/ux-lead-20912",
+      "title": "UX Lead",
+      "company_name": "Design Co",
+      "category": "Design",
+      "tags": "design, ux",
+      "job_type": "contract",
+      "publication_date": "2026-10-23T10:00:00",
+      "candidate_required_location": "Europe",
+      "salary": "",
+      "description": "<p>Lead the design practice.</p>"
+    },
+    {
+      "id": 2091163,
+      "url": "https://remotive.com/remote-jobs/ops/invalid-20913",
+      "title": "",
+      "company_name": "Broken",
+      "description": "Sem título: deve ser ignorada"
+    }
+  ]
+}

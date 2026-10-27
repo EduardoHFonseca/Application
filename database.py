@@ -1,7 +1,10 @@
 import os
 import json
+import hashlib
 import logging
-from typing import Optional, Dict, Any, List
+import re
+import unicodedata
+from typing import Optional, Dict, Any, List, Tuple
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from dotenv import load_dotenv
@@ -25,6 +28,74 @@ EXPECTED_TABLES = (
     "curacao_formacao",
 )
 
+SOURCE_COLUMNS = ("fonte", "source_job_id", "apply_mode", "hash_dedupe")
+
+
+def _normalize(value: str) -> str:
+    if not value:
+        return ""
+    decomposed = unicodedata.normalize("NFKD", str(value))
+    ascii_text = "".join(ch for ch in decomposed if not unicodedata.combining(ch))
+    return re.sub(r"[^a-z0-9]+", " ", ascii_text.lower()).strip()
+
+
+def _dedupe_hash(titulo: str, empresa: str = "", localizacao: str = "", url: str = "") -> str:
+    company = _normalize(empresa) or _normalize(localizacao) or (url or "")
+    return hashlib.sha256(f"{_normalize(titulo)}|{company}".encode("utf-8")).hexdigest()
+
+
+def _existing_columns(cursor) -> set:
+    cursor.execute("""
+        SELECT column_name FROM information_schema.columns
+        WHERE table_schema = current_schema() AND table_name = 'vagas'
+    """)
+    return {row[0] for row in cursor.fetchall()}
+
+
+def ensure_schema(db_url: str = None) -> bool:
+    """Aplica as colunas do crawler multi-fonte se ainda não existirem.
+
+    O usuário de serviço normalmente não tem DDL; nesse caso apenas registra o
+    aviso e a migração deve ser aplicada pelo dbadmin
+    (migrations/001_add_source_columns.sql).
+    """
+    conn = get_connection(db_url)
+    cursor = conn.cursor()
+    try:
+        if not set(SOURCE_COLUMNS) - _existing_columns(cursor):
+            return False
+        cursor.execute("""
+            ALTER TABLE vagas
+                ADD COLUMN IF NOT EXISTS fonte VARCHAR(50) NOT NULL DEFAULT 'linkedin',
+                ADD COLUMN IF NOT EXISTS source_job_id VARCHAR(255),
+                ADD COLUMN IF NOT EXISTS apply_mode VARCHAR(20) NOT NULL DEFAULT 'assisted',
+                ADD COLUMN IF NOT EXISTS hash_dedupe CHAR(64),
+                ALTER COLUMN linkedin_job_id DROP NOT NULL
+        """)
+        cursor.execute("""
+            UPDATE vagas SET source_job_id = linkedin_job_id
+            WHERE source_job_id IS NULL AND linkedin_job_id IS NOT NULL
+        """)
+        cursor.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_vagas_fonte_source
+            ON vagas (fonte, source_job_id)
+        """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_vagas_hash_dedupe ON vagas (hash_dedupe)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_vagas_fonte ON vagas (fonte)")
+        conn.commit()
+        log.info("Schema multi-fonte aplicado com sucesso.")
+        return True
+    except psycopg2.errors.InsufficientPrivilege:
+        conn.rollback()
+        log.warning(
+            "Sem permissão para alterar o schema. Rode migrations/001_add_source_columns.sql "
+            "como dbadmin antes de usar o crawler multi-fonte."
+        )
+        return False
+    finally:
+        cursor.close()
+        conn.close()
+
 def tables_exist(cursor) -> bool:
     """True se todas as tabelas esperadas já existem no schema corrente."""
     cursor.execute("""
@@ -47,23 +118,34 @@ def init_db(db_url: str = None):
         cursor.close()
         conn.close()
         log.info("Tabelas já existem; DDL não é necessário.")
+        ensure_schema(db_url)
         return
 
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS vagas (
             id SERIAL PRIMARY KEY,
-            linkedin_job_id VARCHAR(100) UNIQUE NOT NULL,
+            fonte VARCHAR(50) NOT NULL DEFAULT 'linkedin',
+            source_job_id VARCHAR(255),
+            linkedin_job_id VARCHAR(100) UNIQUE,
             url TEXT NOT NULL,
             titulo TEXT,
             empresa TEXT,
             localizacao TEXT,
             descricao TEXT,
             status VARCHAR(50) NOT NULL DEFAULT 'iniciado',
+            apply_mode VARCHAR(20) NOT NULL DEFAULT 'assisted',
+            hash_dedupe CHAR(64),
             pdf_custom_path TEXT,
             criado_em TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
             atualizado_em TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
         );
     """)
+    cursor.execute("""
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_vagas_fonte_source
+        ON vagas (fonte, source_job_id)
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_vagas_hash_dedupe ON vagas (hash_dedupe)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_vagas_fonte ON vagas (fonte)")
     
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS perguntas_respostas (
@@ -121,7 +203,36 @@ def init_db(db_url: str = None):
 def get_job_by_linkedin_id(linkedin_job_id: str, db_url: str = None) -> Optional[Dict[str, Any]]:
     conn = get_connection(db_url)
     cursor = conn.cursor(cursor_factory=RealDictCursor)
-    cursor.execute("SELECT * FROM vagas WHERE linkedin_job_id = %s", (str(linkedin_job_id),))
+    cursor.execute(
+        """
+        SELECT * FROM vagas
+        WHERE linkedin_job_id = %s
+           OR (fonte = 'linkedin' AND source_job_id = %s)
+        ORDER BY id DESC LIMIT 1
+        """,
+        (str(linkedin_job_id), str(linkedin_job_id)),
+    )
+    row = cursor.fetchone()
+    cursor.close()
+    conn.close()
+    return dict(row) if row else None
+
+def get_job_by_source(fonte: str, source_job_id: str, db_url: str = None) -> Optional[Dict[str, Any]]:
+    conn = get_connection(db_url)
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
+    cursor.execute(
+        "SELECT * FROM vagas WHERE fonte = %s AND source_job_id = %s ORDER BY id DESC LIMIT 1",
+        (fonte, str(source_job_id)),
+    )
+    row = cursor.fetchone()
+    cursor.close()
+    conn.close()
+    return dict(row) if row else None
+
+def find_job_by_dedupe(hash_dedupe: str, db_url: str = None) -> Optional[Dict[str, Any]]:
+    conn = get_connection(db_url)
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
+    cursor.execute("SELECT * FROM vagas WHERE hash_dedupe = %s ORDER BY id ASC LIMIT 1", (hash_dedupe,))
     row = cursor.fetchone()
     cursor.close()
     conn.close()
@@ -129,6 +240,10 @@ def get_job_by_linkedin_id(linkedin_job_id: str, db_url: str = None) -> Optional
 
 def is_job_applied(linkedin_job_id: str, db_url: str = None) -> bool:
     job = get_job_by_linkedin_id(linkedin_job_id, db_url)
+    return job is not None and job.get("status") == "aplicado"
+
+def is_job_applied_source(fonte: str, source_job_id: str, db_url: str = None) -> bool:
+    job = get_job_by_source(fonte, source_job_id, db_url)
     return job is not None and job.get("status") == "aplicado"
 
 def save_or_update_job(
@@ -140,12 +255,24 @@ def save_or_update_job(
     descricao: str = "",
     status: str = "iniciado",
     pdf_custom_path: str = "",
+    fonte: str = "linkedin",
+    source_job_id: Optional[str] = None,
+    apply_mode: str = "assisted",
+    hash_dedupe: Optional[str] = None,
     db_url: str = None
 ) -> int:
+    fonte = (fonte or "linkedin").strip().lower()
+    source_job_id = str(source_job_id or linkedin_job_id)
+    linkedin_value = str(linkedin_job_id) if fonte == "linkedin" else None
+    hash_dedupe = hash_dedupe or _dedupe_hash(titulo, empresa, localizacao, url)
+
     conn = get_connection(db_url)
     cursor = conn.cursor(cursor_factory=RealDictCursor)
     
-    cursor.execute("SELECT id FROM vagas WHERE linkedin_job_id = %s", (str(linkedin_job_id),))
+    cursor.execute(
+        "SELECT id FROM vagas WHERE fonte = %s AND source_job_id = %s",
+        (fonte, source_job_id),
+    )
     row = cursor.fetchone()
     
     if row:
@@ -159,21 +286,107 @@ def save_or_update_job(
                 descricao = COALESCE(NULLIF(%s, ''), descricao),
                 status = %s,
                 pdf_custom_path = COALESCE(NULLIF(%s, ''), pdf_custom_path),
+                apply_mode = %s,
+                hash_dedupe = COALESCE(%s, hash_dedupe),
                 atualizado_em = CURRENT_TIMESTAMP
             WHERE id = %s
-        """, (url, titulo, empresa, localizacao, descricao, status, pdf_custom_path, job_id))
+        """, (url, titulo, empresa, localizacao, descricao, status, pdf_custom_path,
+              apply_mode, hash_dedupe, job_id))
     else:
         cursor.execute("""
-            INSERT INTO vagas (linkedin_job_id, url, titulo, empresa, localizacao, descricao, status, pdf_custom_path)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            INSERT INTO vagas
+                (fonte, source_job_id, linkedin_job_id, url, titulo, empresa,
+                 localizacao, descricao, status, apply_mode, hash_dedupe, pdf_custom_path)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
-        """, (str(linkedin_job_id), url, titulo, empresa, localizacao, descricao, status, pdf_custom_path))
+        """, (fonte, source_job_id, linkedin_value, url, titulo, empresa,
+              localizacao, descricao, status, apply_mode, hash_dedupe, pdf_custom_path))
         job_id = cursor.fetchone()["id"]
         
     conn.commit()
     cursor.close()
     conn.close()
     return job_id
+
+def save_posting(posting, status: str = "descoberto", db_url: str = None) -> Tuple[int, bool]:
+    """Persiste uma vaga normalizada de qualquer fonte.
+
+    Retorna (vaga_id, criada). Se já existir o mesmo anúncio em outra fonte
+    (mesmo hash de título + empresa), reaproveita o registro e retorna
+    criada=False.
+    """
+    data = posting.to_db()
+    conn = get_connection(db_url)
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+    cursor.execute(
+        """
+        SELECT id FROM vagas
+        WHERE hash_dedupe = %s AND NOT (fonte = %s AND source_job_id = %s)
+        ORDER BY id ASC LIMIT 1
+        """,
+        (data["hash_dedupe"], data["fonte"], data["source_job_id"]),
+    )
+    duplicate = cursor.fetchone()
+    if duplicate:
+        cursor.close()
+        conn.close()
+        return duplicate["id"], False
+
+    cursor.execute(
+        """
+        INSERT INTO vagas
+            (fonte, source_job_id, linkedin_job_id, url, titulo, empresa,
+             localizacao, descricao, status, apply_mode, hash_dedupe)
+        VALUES (%s, %s, NULL, %s, %s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT (fonte, source_job_id) DO UPDATE SET
+            url = EXCLUDED.url,
+            titulo = COALESCE(NULLIF(EXCLUDED.titulo, ''), vagas.titulo),
+            empresa = COALESCE(NULLIF(EXCLUDED.empresa, ''), vagas.empresa),
+            localizacao = COALESCE(NULLIF(EXCLUDED.localizacao, ''), vagas.localizacao),
+            descricao = COALESCE(NULLIF(EXCLUDED.descricao, ''), vagas.descricao),
+            apply_mode = EXCLUDED.apply_mode,
+            hash_dedupe = COALESCE(EXCLUDED.hash_dedupe, vagas.hash_dedupe),
+            status = CASE
+                WHEN vagas.status IN ('aplicado', 'cv_gerado') THEN vagas.status
+                ELSE EXCLUDED.status
+            END,
+            atualizado_em = CURRENT_TIMESTAMP
+        RETURNING id, (xmax = 0) AS inserted
+        """,
+        (
+            data["fonte"], data["source_job_id"], data["url"], data["titulo"],
+            data["empresa"], data["localizacao"], data["descricao"], status,
+            data["apply_mode"], data["hash_dedupe"],
+        ),
+    )
+    row = cursor.fetchone()
+    conn.commit()
+    cursor.close()
+    conn.close()
+    return row["id"], bool(row["inserted"])
+
+def update_job_status(
+    job_id: int,
+    status: str,
+    pdf_custom_path: Optional[str] = None,
+    db_url: str = None,
+) -> None:
+    conn = get_connection(db_url)
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        UPDATE vagas
+        SET status = %s,
+            pdf_custom_path = COALESCE(NULLIF(%s, ''), pdf_custom_path),
+            atualizado_em = CURRENT_TIMESTAMP
+        WHERE id = %s
+        """,
+        (status, pdf_custom_path or "", job_id),
+    )
+    conn.commit()
+    cursor.close()
+    conn.close()
 
 def save_qa(vaga_id: int, pergunta: str, resposta: str, origem: str = "ia", db_url: str = None):
     conn = get_connection(db_url)

@@ -1,0 +1,22 @@
+[
+  {
+    "url": "https://www.workingnomads.com/job/go/1960693/",
+    "title": "Senior Product Owner",
+    "description": "<p>Own the <strong>product backlog</strong> for a remote team.</p>",
+    "company_name": "Nomad Labs",
+    "category_name": "Product",
+    "tags": "product,agile,scrum",
+    "location": "Europe, LATAM, APAC",
+    "pub_date": "2026-10-21T14:06:17-04:00"
+  },
+  {
+    "url": "https://www.workingnomads.com/job/go/1960694/",
+    "title": "Data Engineer",
+    "description": "<p>Build pipelines.</p>",
+    "company_name": "Data Nomads",
+    "category_name": "Development",
+    "tags": "python,airflow",
+    "location": "USA Only",
+    "pub_date": "2026-10-22T09:00:00-04:00"
+  }
+]

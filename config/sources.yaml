@@ -1,0 +1,219 @@
+# Catálogo de fontes do crawler multi-site.
+# Curadoria feita a partir de Application.txt (F0) com validação HTTP real.
+#
+# apply_mode:
+#   auto      -> o robô preenche e submete a candidatura (somente LinkedIn)
+#   assisted  -> o robô descobre a vaga, gera CV e notifica com o link
+#   link_only -> apenas registra o link; envio manual (marketplaces)
+
+defaults:
+  keywords:
+    - product manager
+    - product owner
+    - project manager
+    - program manager
+    - delivery manager
+    - head of product
+    - gerente de produtos
+    - gerente de projetos
+    - gerente de ti
+    - pmo
+  locations:
+    - Brazil
+    - Brasil
+    - Remote
+    - Remoto
+    - LATAM
+    - Worldwide
+    - Anywhere
+  limit: 50
+  max_items: 500
+  request_timeout: 20
+  user_agent: "ApplicationCrawler/1.0 (+https://github.com/EduardoHFonseca/Application)"
+  description_max_chars: 30000
+
+sources:
+  remotive:
+    enabled: true
+    label: Remotive
+    type: api
+    apply_mode: assisted
+    min_interval_hours: 6
+    url: https://remotive.com/api/remote-jobs
+    notes: >
+      API pública JSON. Regras do provedor: linkar de volta para a URL original,
+      citar o Remotive como fonte e não fazer mais de 4 chamadas por dia.
+      Em 2026-10-27 o endpoint gratuito devolveu apenas uma amostra de 10 vagas;
+      para volume maior será necessário um parser HTML na Fase 2.
+
+  wwr:
+    enabled: true
+    label: We Work Remotely
+    type: rss
+    apply_mode: assisted
+    min_interval_hours: 2
+    feeds:
+      - https://weworkremotely.com/remote-jobs.rss
+    notes: Feed RSS público e estável.
+
+  workingnomads:
+    enabled: true
+    label: Working Nomads
+    type: api
+    apply_mode: assisted
+    min_interval_hours: 4
+    url: https://www.workingnomads.com/api/exposed_jobs/
+    notes: Endpoint JSON público usado pelo próprio portal.
+
+  linkedin:
+    enabled: true
+    label: LinkedIn Easy Apply
+    type: browser
+    apply_mode: auto
+    can_auto_apply: true
+    requires_login: true
+    min_interval_hours: 4
+    notes: >
+      Descoberta e candidatura continuam no motor Playwright
+      (playwright_bot.py). O adaptador existe para o pipeline unificado.
+
+  # --- Fase 2: boards HTML (habilitar quando o parser for implementado) ---
+  jobspresso:
+    enabled: false
+    label: Jobspresso
+    type: html
+    apply_mode: assisted
+    min_interval_hours: 6
+    url: https://jobspresso.co/
+  justremote:
+    enabled: false
+    label: JustRemote
+    type: html
+    apply_mode: assisted
+    min_interval_hours: 6
+    url: https://justremote.co/
+  dailyremote:
+    enabled: false
+    label: DailyRemote
+    type: html
+    apply_mode: assisted
+    min_interval_hours: 6
+    url: https://dailyremote.com/
+  pangian:
+    enabled: false
+    label: Pangian
+    type: html
+    apply_mode: assisted
+    min_interval_hours: 6
+    url: https://pangian.com/
+  arc:
+    enabled: false
+    label: ARC
+    type: html
+    apply_mode: assisted
+    min_interval_hours: 6
+    url: https://arc.dev/
+
+  # --- Fase 3: sessão manual / marketplaces (link + rascunho de proposta) ---
+  wellfound:
+    enabled: false
+    label: Wellfound (AngelList)
+    type: browser
+    apply_mode: link_only
+    requires_login: true
+    min_interval_hours: 12
+    url: https://wellfound.com/jobs
+  upwork:
+    enabled: false
+    label: Upwork
+    type: marketplace
+    apply_mode: link_only
+    requires_login: true
+    min_interval_hours: 12
+    url: https://www.upwork.com/
+  fiverr:
+    enabled: false
+    label: Fiverr
+    type: marketplace
+    apply_mode: link_only
+    requires_login: true
+    min_interval_hours: 12
+    url: https://www.fiverr.com/
+  freelancer:
+    enabled: false
+    label: Freelancer.com
+    type: marketplace
+    apply_mode: link_only
+    requires_login: true
+    min_interval_hours: 12
+    url: https://www.freelancer.com/
+  servicescape:
+    enabled: false
+    label: ServiceScape
+    type: marketplace
+    apply_mode: link_only
+    requires_login: true
+    min_interval_hours: 12
+    url: https://www.servicescape.com/
+
+  # --- Fase 4: boards brasileiros ---
+  gupy:
+    enabled: false
+    label: Gupy
+    type: html
+    apply_mode: assisted
+    min_interval_hours: 4
+    url: https://portal.gupy.io/
+  vagas:
+    enabled: false
+    label: Vagas.com.br
+    type: html
+    apply_mode: assisted
+    min_interval_hours: 4
+    url: https://www.vagas.com.br/
+  programathor:
+    enabled: false
+    label: Programathor
+    type: html
+    apply_mode: assisted
+    min_interval_hours: 6
+    url: https://programathor.com.br/jobs
+
+# Itens de Application.txt removidos na curadoria (F0) e o motivo.
+discarded:
+  - name: Contena
+    url: https://www.contena.co
+    reason: Domínio offline (sem conexão em 2026-10-27).
+  - name: Polo Recursos Humanos
+    url: https://polorecursoshumanos.com/vagas
+    reason: Domínio offline (sem conexão em 2026-10-27).
+  - name: RemoteLeaf
+    url: https://remoteleaf.com/
+    reason: Agregador por assinatura; não expõe vagas sem conta paga.
+  - name: SolidGigs
+    url: https://solidgigs.com
+    reason: Agregador por assinatura; não expõe vagas sem conta paga.
+  - name: DataAnnotation
+    url: https://www.dataannotation.tech/
+    reason: Plataforma de gigs de anotação de IA com cadastro/avaliação, não board de vagas.
+  - name: Craigslist
+    url: https://www.craigslist.org/
+    reason: Classificados por cidade, sem formulário de candidatura estruturado.
+  - name: Snagajob
+    url: https://www.snagajob.com/
+    reason: Vagas horistas de varejo nos EUA (403 anti-bot); fora do perfil.
+  - name: CoolWorks
+    url: https://www.coolworks.com/
+    reason: Vagas sazonais de hospitalidade nos EUA (403 anti-bot); fora do perfil.
+  - name: Alecrim Job Hunter
+    url: https://alecrimjobhunter.com.br/
+    reason: Programa de recolocação profissional, não é board de vagas.
+  - name: Remotive (duplicado)
+    url: https://remotive.com
+    reason: Entrada repetida; unificada em "remotive".
+  - name: AngelList
+    url: https://angel.co/
+    reason: Redireciona para Wellfound; unificado em "wellfound".
+  - name: freelance.com
+    url: https://www.freelance.com/
+    reason: Domínio não é o Freelancer.com; substituído por freelancer.com na Fase 3.

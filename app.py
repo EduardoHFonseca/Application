@@ -14,6 +14,8 @@ load_dotenv(ENV_FILE)
 
 import database
 from ai_brain import AIBrain
+import crawler
+from sources import registry as source_registry
 
 # Configuração da página Streamlit
 st.set_page_config(
@@ -79,6 +81,10 @@ st.caption("Painel Executivo de Candidaturas no LinkedIn, Gestão de Competênci
 # ---------------------------------------------------------
 jobs_list = database.get_all_jobs()
 df_jobs = pd.DataFrame(jobs_list) if jobs_list else pd.DataFrame()
+if not df_jobs.empty:
+    for column in ("fonte", "source_job_id", "apply_mode"):
+        if column not in df_jobs.columns:
+            df_jobs[column] = ""
 
 total_jobs = len(df_jobs)
 applied_jobs = len(df_jobs[df_jobs["status"] == "aplicado"]) if not df_jobs.empty else 0
@@ -100,12 +106,13 @@ st.divider()
 # ---------------------------------------------------------
 # NAVEGAÇÃO POR ABAS
 # ---------------------------------------------------------
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "📊 Histórico & Audit Trail",
     "🎯 Candidatura Sob Demanda",
     "🧩 Curação da Base Mestra",
     "⚙️ Filtros & Configurações",
-    "📄 Acervo Original & Fontes"
+    "📄 Acervo Original & Fontes",
+    "🌐 Fontes & Crawler"
 ])
 
 # ---------------------------------------------------------
@@ -118,21 +125,36 @@ with tab1:
         st.info("Nenhuma candidatura registrada no banco de dados até o momento.")
     else:
         # Filtros de busca
-        f_col1, f_col2 = st.columns([1, 3])
+        f_col1, f_col2, f_col3 = st.columns([1, 1, 3])
         with f_col1:
-            status_filter = st.selectbox("Filtrar por Status:", ["Todos", "aplicado", "cv_gerado", "iniciado", "falha"])
+            status_filter = st.selectbox(
+                "Filtrar por Status:",
+                ["Todos", "descoberto", "cv_gerado", "aplicado", "iniciado", "falha", "ignorado"],
+            )
         with f_col2:
+            fonte_options = ["Todas"] + sorted(
+                [str(value) for value in df_jobs["fonte"].dropna().unique()]
+            )
+            fonte_filter = st.selectbox("Filtrar por Fonte:", fonte_options)
+        with f_col3:
             search_query = st.text_input("Buscar por Cargo ou Palavra-chave:", "")
 
         df_filtered = df_jobs.copy()
         if status_filter != "Todos":
             df_filtered = df_filtered[df_filtered["status"] == status_filter]
+        if fonte_filter != "Todas":
+            df_filtered = df_filtered[df_filtered["fonte"] == fonte_filter]
         if search_query:
             df_filtered = df_filtered[df_filtered["titulo"].str.contains(search_query, case=False, na=False)]
 
         # Tabela de Vagas
+        display_columns = [
+            "id", "fonte", "source_job_id", "titulo", "empresa",
+            "localizacao", "status", "criado_em",
+        ]
+        display_columns = [column for column in display_columns if column in df_filtered.columns]
         st.dataframe(
-            df_filtered[["id", "linkedin_job_id", "titulo", "status", "criado_em", "url"]],
+            df_filtered[display_columns],
             use_container_width=True,
             hide_index=True
         )
@@ -140,7 +162,10 @@ with tab1:
         st.divider()
         st.subheader("🔍 Detalhamento e Pergunta/Resposta da Vaga Selecionada")
         
-        job_options = {f"#{row['id']} - {row['titulo']} (ID LinkedIn: {row['linkedin_job_id']})": row['id'] for _, row in df_filtered.iterrows()}
+        job_options = {
+            f"#{row['id']} - {row['titulo']} [{row.get('fonte', '')}:{row.get('source_job_id', '')}]": row['id']
+            for _, row in df_filtered.iterrows()
+        }
         if job_options:
             selected_option = st.selectbox("Selecione uma vaga para inspecionar:", list(job_options.keys()))
             selected_job_id = job_options[selected_option]
@@ -150,8 +175,9 @@ with tab1:
             d_col1, d_col2 = st.columns(2)
             with d_col1:
                 st.markdown(f"**Título:** {job_detail.get('titulo', 'N/A')}")
+                st.markdown(f"**Fonte:** `{job_detail.get('fonte', 'linkedin')}` / `{job_detail.get('source_job_id', job_detail.get('linkedin_job_id', ''))}`")
                 st.markdown(f"**Status:** `{job_detail.get('status', 'N/A')}`")
-                st.markdown(f"**URL:** [Acessar Vaga no LinkedIn]({job_detail.get('url', '#')})")
+                st.markdown(f"**URL:** [Acessar Vaga]({job_detail.get('url', '#')})")
             with d_col2:
                 st.markdown(f"**Data de Descoberta:** {job_detail.get('criado_em', 'N/A')}")
                 pdf_path = job_detail.get("pdf_custom_path")
@@ -554,6 +580,8 @@ with tab4:
         locations_val = st.text_input("Localizações (separados por vírgula):", value=os.getenv("LINKEDIN_LOCATIONS", ""))
         salary_val = st.text_input("Pretensão Salarial:", value=os.getenv("LINKEDIN_SALARY", "60,000"))
         interval_val = st.number_input("Intervalo do Scheduler (horas):", min_value=1.0, max_value=24.0, value=float(os.getenv("CRAWLER_INTERVAL_HOURS", "4")), step=1.0)
+        keywords_env = st.text_input("Palavras-chave do crawler multi-fonte:", value=os.getenv("SEARCH_KEYWORDS", ""))
+        sources_env = st.text_input("Fontes habilitadas (CRAWLER_SOURCES):", value=os.getenv("CRAWLER_SOURCES", "remotive,wwr,workingnomads"))
 
         st.divider()
         st.write("### 📄 Geração de Currículo (PDF)")
@@ -586,6 +614,11 @@ AZURE_OPENAI_CHAT_DEPLOYMENT={os.getenv('AZURE_OPENAI_CHAT_DEPLOYMENT', 'gpt-4o-
 AZURE_OPENAI_EMBEDDING_DEPLOYMENT={os.getenv('AZURE_OPENAI_EMBEDDING_DEPLOYMENT', 'text-embedding-3-small')}
 AZURE_OPENAI_API_VERSION={os.getenv('AZURE_OPENAI_API_VERSION', '2024-02-15-preview')}
 
+# Roteador local de LLMs livres (FreeLLM-router)
+LLM_BASE_URL={os.getenv('LLM_BASE_URL', '')}
+LLM_API_KEY={os.getenv('LLM_API_KEY', '')}
+LLM_MODEL={os.getenv('LLM_MODEL', 'auto')}
+
 # Telegram Human-in-the-Loop Configuration
 TELEGRAM_BOT_TOKEN={tg_token}
 TELEGRAM_CHAT_ID={tg_chat}
@@ -607,6 +640,12 @@ CV_TEMPLATE={template_val}
 
 # Crawler Scheduler Configuration
 CRAWLER_INTERVAL_HOURS={interval_val}
+
+# Crawler Multi-Fonte
+CRAWLER_SOURCES={sources_env}
+SEARCH_KEYWORDS={keywords_env}
+SEARCH_LOCATIONS={locations_val}
+CRAWLER_LIMIT_PER_SOURCE={os.getenv('CRAWLER_LIMIT_PER_SOURCE', '50')}
 
 # LinkedIn Search Preferences
 LINKEDIN_POSITIONS={positions_val}
@@ -639,3 +678,130 @@ with tab5:
             with open(save_path, "wb") as f:
                 f.write(uploaded_file.getbuffer())
             st.success(f"Arquivo `{uploaded_file.name}` salvo em `source/`!")
+
+# ---------------------------------------------------------
+# ABA 6: FONTES & CRAWLER MULTI-SITE
+# ---------------------------------------------------------
+with tab6:
+    st.subheader("Crawler Multi-Fonte")
+    st.write(
+        "Descubra vagas em Remotive, We Work Remotely e Working Nomads, "
+        "filtre por cargo/localização e gere CV personalizado sob demanda."
+    )
+
+    crawler_config = source_registry.load_config()
+    sources_table = pd.DataFrame(source_registry.source_summary(crawler_config))
+    st.write("### 📚 Catálogo de Fontes")
+    st.dataframe(
+        sources_table[["name", "label", "type", "apply_mode", "enabled", "implemented", "fetchable", "url"]],
+        use_container_width=True,
+        hide_index=True,
+    )
+
+    implemented_sources = [
+        row["name"] for row in sources_table.to_dict("records")
+        if row["fetchable"] and row["name"] != "linkedin"
+    ]
+    default_sources = [
+        row["name"] for row in sources_table.to_dict("records")
+        if row["fetchable"] and row["enabled"] and row["name"] != "linkedin"
+    ]
+
+    with st.form("crawler_form"):
+        st.write("### 🔎 Parâmetros da Coleta")
+        selected_sources = st.multiselect(
+            "Fontes:",
+            options=implemented_sources,
+            default=default_sources or implemented_sources,
+        )
+        keywords_value = st.text_input(
+            "Palavras-chave (separadas por vírgula):",
+            value=", ".join(source_registry.default_keywords(crawler_config)),
+        )
+        locations_value = st.text_input(
+            "Localizações (separadas por vírgula):",
+            value=", ".join(source_registry.default_locations(crawler_config)),
+        )
+        limit_value = st.number_input(
+            "Limite de vagas por fonte:",
+            min_value=1,
+            max_value=200,
+            value=int(os.getenv("CRAWLER_LIMIT_PER_SOURCE", "50")),
+            step=10,
+        )
+        col_cv, col_dry, col_notify = st.columns(3)
+        with col_cv:
+            with_cv_value = st.checkbox("Gerar CV para vagas novas", value=False)
+        with col_dry:
+            dry_run_value = st.checkbox("Dry-run (não gravar)", value=True)
+        with col_notify:
+            notify_value = st.checkbox("Notificar no Telegram", value=True)
+
+        run_crawler = st.form_submit_button("🚀 Executar Coleta")
+
+    if run_crawler:
+        if not selected_sources:
+            st.warning("Selecione ao menos uma fonte.")
+        else:
+            keywords = [item.strip() for item in keywords_value.split(",") if item.strip()]
+            locations = [item.strip() for item in locations_value.split(",") if item.strip()]
+            with st.spinner("Coletando vagas..."):
+                try:
+                    st.session_state["crawler_summary"] = crawler.collect(
+                        source_names=selected_sources,
+                        keywords=keywords,
+                        locations=locations,
+                        limit=int(limit_value),
+                        with_cv=with_cv_value,
+                        dry_run=dry_run_value,
+                        notify=notify_value and not dry_run_value,
+                        ignore_schedule=True,
+                        config=crawler_config,
+                    )
+                    st.success("Coleta concluída.")
+                except Exception as exc:
+                    st.error(f"Falha na coleta: {exc}")
+
+    summary = st.session_state.get("crawler_summary")
+    if summary:
+        st.divider()
+        st.write("### 📊 Resultado da Última Coleta")
+        summary_rows = []
+        for name, info in (summary.get("sources") or {}).items():
+            summary_rows.append(
+                {
+                    "fonte": name,
+                    "coletadas": info.get("fetched", 0),
+                    "filtradas": info.get("matched", 0),
+                    "novas": info.get("new", 0),
+                    "já_conhecidas": info.get("skipped", 0),
+                    "observação": info.get("error") or info.get("skipped_reason") or "",
+                }
+            )
+        st.dataframe(pd.DataFrame(summary_rows), use_container_width=True, hide_index=True)
+
+        postings = summary.get("postings") or []
+        if postings:
+            st.write("### 🧾 Vagas Encontradas (dry-run)")
+            st.dataframe(
+                pd.DataFrame(
+                    [
+                        {
+                            "fonte": posting.fonte,
+                            "titulo": posting.titulo,
+                            "empresa": posting.empresa,
+                            "localizacao": posting.localizacao,
+                            "url": posting.url,
+                            "score": crawler.fit_score(posting, summary.get("keywords")),
+                        }
+                        for posting in postings
+                    ]
+                ).sort_values("score", ascending=False),
+                use_container_width=True,
+                hide_index=True,
+            )
+
+    with st.expander("🗑️ Itens descartados na curadoria (Application.txt)"):
+        discarded = pd.DataFrame(crawler_config.get("discarded") or [])
+        if not discarded.empty:
+            st.dataframe(discarded, use_container_width=True, hide_index=True)

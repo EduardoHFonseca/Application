@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:media="http://search.yahoo.com/mrss">
+  <channel>
+    <title>We Work Remotely: fixture</title>
+    <link>https://weworkremotely.com/remote-jobs.rss</link>
+    <description>fixture</description>
+    <item>
+      <title>Acme Remote: Senior Product Manager</title>
+      <link>https://weworkremotely.com/remote-jobs/acme-remote-senior-product-manager-1</link>
+      <region>Anywhere in the World</region>
+      <country>Brazil</country>
+      <skills>Product Management, Agile, and Roadmap</skills>
+      <category>Product</category>
+      <type>Full-Time</type>
+      <pubDate>Mon, 26 Oct 2026 20:12:46 +0000</pubDate>
+      <description>&lt;p&gt;Looking for a &lt;strong&gt;Product Manager&lt;/strong&gt;.&lt;/p&gt;</description>
+    </item>
+    <item>
+      <title>Globex: Backend Engineer</title>
+      <link>https://weworkremotely.com/remote-jobs/globex-backend-engineer-2</link>
+      <region>USA Only</region>
+      <skills>Python, SQL</skills>
+      <category>Back-End Programming</category>
+      <type>Full-Time</type>
+      <description>&lt;p&gt;Backend role.&lt;/p&gt;</description>
+    </item>
+  </channel>
+</rss>
